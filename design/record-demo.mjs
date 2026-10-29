@@ -261,6 +261,8 @@ try {
     await click(page.locator(".item", { hasText: "Q4" }));               // move to the next question
     await sleep(700);
 
+    await click(page.locator("#aside-toggle"));                          // open the discussion panel
+    await sleep(500);
     await click(page.locator("#thread-in"));                             // ask about it in its own thread
     await page.locator("#thread-in").pressSequentially(QUESTION, { delay: 38 });
     await sleep(500);
@@ -296,18 +298,20 @@ try {
     write(state);
     await sleep(2400);                                                   // pros and cons fill the panel
 
-    await click(page.locator("#visualize"));                             // one picture of the design so far
+    const q6 = state.questions.find((q) => q.id === "q6");
+    await click(page.locator("#mode-visualize"));                        // Q6 drawn on the design so far
     seq = 3;
     await sleep(900);
-    state.visual = { kind: "prototype", version: 0, thread: [], stale: false, drawing: { since: new Date().toISOString(), seq } };
+    q6.visual = { kind: "prototype", version: 0, stale: false, drawing: { since: new Date().toISOString(), seq } };
     state.agent = waiting();
     write(state);
     await sleep(2200);                                                   // acknowledged; a subagent draws it in the background
 
-    writeFileSync(join(session, "visual.html"), prototype(false));
-    state.visual = { kind: "prototype", version: 1, at: new Date().toISOString(), note: "v1: conflict copy kept beside the note, queued edits marked in the list", thread: [], stale: false };
+    mkdirSync(join(session, "visuals"), { recursive: true });
+    writeFileSync(join(session, "visuals", "q6.html"), prototype(false));
+    q6.visual = { kind: "prototype", version: 1, at: new Date().toISOString(), note: "v1: conflict copy kept beside the note, queued edits marked in the list", stale: false };
     write(state);
-    await sleep(2400);                                                   // it lands and the view flips by itself
+    await sleep(2400);                                                   // it lands in the card's place
 
     await click(page.locator("#feedback-in"));                           // say what is missing from the picture
     await page.locator("#feedback-in").pressSequentially(FEEDBACK, { delay: 38 });
@@ -318,14 +322,14 @@ try {
     await click(page.locator("#send"));                                  // feedback ships like any other send
     seq = 4;
     await sleep(700);
-    state.visual.thread = [{ who: "user", text: FEEDBACK, at: new Date().toISOString() }, { who: "agent", text: REDRAW, at: new Date().toISOString() }];
-    state.visual.drawing = { since: new Date().toISOString(), seq };
+    q6.thread = (q6.thread || []).concat([{ who: "user", text: FEEDBACK, at: new Date().toISOString(), on: "visual" }, { who: "agent", text: REDRAW, at: new Date().toISOString(), on: "visual" }]);
+    q6.visual.drawing = { since: new Date().toISOString(), seq };
     state.agent = waiting();
     write(state);
     await sleep(2400);                                                   // answered at once, redrawn in the background
 
-    writeFileSync(join(session, "visual.html"), prototype(true));
-    state.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2: the conflict copy is a row in the list", thread: state.visual.thread, stale: false };
+    writeFileSync(join(session, "visuals", "q6.html"), prototype(true));
+    q6.visual = { kind: "prototype", version: 2, at: new Date().toISOString(), note: "v2: the conflict copy is a row in the list", stale: false };
     write(state);
     await sleep(3200);                                                   // v2 lands in place, the note under the note
   } finally {

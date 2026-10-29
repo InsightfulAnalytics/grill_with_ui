@@ -32,8 +32,11 @@
   html, body { height: 100%; margin: 0; }
   body {
     font-family: var(--sans); font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--bg);
-    display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: 260px minmax(0, 1fr) 33vw; height: 100vh;
+    display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: 260px minmax(0, 1fr) var(--aside-w); height: 100vh;
+    /* The discussion panel is a slim rail until opened; open, it takes the third it always had. */
+    --aside-w: 40px;
   }
+  body.aside-open { --aside-w: 33vw; }
   a { color: var(--accent); }
   /* Rows are pinned: the banner is display:none most of the time, and auto-placement would
      otherwise slide the content into the "auto" row and stretch the footer into the "1fr" row. */
@@ -59,16 +62,20 @@
   header.working #progress { display: block; }
   #progress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 30%; background: var(--stage); animation: slide 1.4s ease-in-out infinite; }
   @keyframes slide { from { left: -30%; } to { left: 100%; } }
-  #levels-toggle, #terms-toggle, #visualize { font-size: 12px; padding: 4px 10px; }
+  #levels-toggle, #terms-toggle { font-size: 12px; padding: 4px 10px; }
   #theme-toggle { display: inline-flex; align-items: center; padding: 4px 8px; }
   #theme-toggle svg { display: none; width: 15px; height: 15px; }
   #theme-toggle[data-mode="system"] .i-system, #theme-toggle[data-mode="light"] .i-light, #theme-toggle[data-mode="dark"] .i-dark { display: block; }
-  #visualize .spin { width: 9px; height: 9px; margin-right: 4px; }
-  #visualize:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
-  #subagent-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
-  #subagent-opt[hidden] { display: none; }
-  #subagent-opt input { margin: 0; accent-color: var(--accent); }
-  #subagent-opt label { cursor: pointer; }
+  /* Questions / Visualize: two modes of the same page; the question list stays in both. */
+  .seg { display: inline-flex; } .seg[hidden] { display: none; }
+  .seg button { font-size: 12px; padding: 4px 10px; border-radius: 0; margin-left: -1px; }
+  .seg button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; } .seg button:last-child { border-radius: 0 6px 6px 0; }
+  .seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-fill); position: relative; }
+  #subagent-opt, #auto-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+  #subagent-opt[hidden], #auto-opt[hidden] { display: none; }
+  #subagent-opt input, #auto-opt input { margin: 0; accent-color: var(--accent); }
+  #subagent-opt label, #auto-opt label { cursor: pointer; }
+  #auto-opt input:disabled + label { cursor: default; color: var(--ink-3); }
   .info { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; border: 1px solid var(--ink-3); color: var(--ink-3); font: italic 600 10px/1 var(--serif); cursor: help; }
   .info:hover, .info:focus { color: var(--ink); border-color: var(--ink); outline: none; }
   .info::after { content: attr(data-tip); display: none; position: absolute; top: calc(100% + 8px); right: -8px; width: 260px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.08); color: var(--ink-2); font: 12px/1.45 system-ui, sans-serif; font-style: normal; white-space: normal; text-align: left; z-index: 6; }
@@ -103,20 +110,45 @@
   .item .mark svg { width: 12px; height: 12px; }
   .mark.answered { color: var(--ok); } .mark.open, .mark.reopened { color: var(--accent); } .mark.staged { color: var(--stage); font-weight: 600; } .mark.pending { color: var(--stage); }
   .item.updated .t::after { content: "updated"; font-size: 10px; color: var(--stage); margin-left: 6px; letter-spacing: .06em; text-transform: uppercase; }
+  /* A question with a visual carries a small frame icon (amber when out of date); one with
+     discussion you have not read carries a dot. */
+  .item .vis { display: inline-flex; vertical-align: -1px; margin-left: 6px; color: var(--ink-3); } .item .vis svg { width: 12px; height: 12px; }
+  .item .vis.stale { color: var(--stage); } .item .vis .spin { width: 9px; height: 9px; border-width: 1.5px; color: var(--stage); }
+  .udot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--stage); margin-left: 6px; vertical-align: 1px; }
   nav .empty { padding: 20px; font-size: 13px; color: var(--ink-3); }
 
-  /* Visualize view: the list and card columns give way to the visual; the right panel becomes its feedback. */
-  #visual { grid-row: 3; grid-column: 1 / 3; display: none; grid-template-rows: auto 1fr; min-height: 0; background: var(--panel); }
-  body.visualize #visual { display: grid; } body.visualize nav, body.visualize main { display: none; }
-  #visual-strip { display: flex; align-items: center; gap: 14px; padding: 8px 24px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); background: var(--bg); }
+  /* Visualize mode: the selected question's visual takes the card's column; the list stays. */
+  #visual { grid-row: 3; grid-column: 2; display: none; grid-template-rows: auto auto 1fr; min-height: 0; background: var(--panel); }
+  body.visualize #visual { display: grid; } body.visualize main { display: none; }
+  #visual-strip { grid-row: 1; display: flex; align-items: center; gap: 14px; padding: 8px 24px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); background: var(--bg); min-width: 0; }
+  #visual-strip .qt { font-family: var(--serif); font-size: 15px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  #visual-strip .qid { font-size: 12px; color: var(--ink-3); }
   #visual-strip .kind { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
-  #visual-strip .ver { color: var(--ink-3); } #visual-strip .ver b { color: var(--ink-2); font-weight: 600; }
-  #visual-stale { color: var(--stage); font-size: 12px; }
-  #visual-strip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--stage); }
+  #visual-strip .ver { color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; } #visual-strip .ver b { color: var(--ink-2); font-weight: 600; }
+  #visual-stale { color: var(--stage); font-size: 12px; white-space: nowrap; }
+  #visual-strip .right { margin-left: auto; display: flex; align-items: center; gap: 10px; color: var(--stage); white-space: nowrap; }
   #visual-strip a { color: var(--ink-3); text-decoration: none; font-size: 13px; } #visual-strip a:hover { color: var(--accent); }
-  #visual-frame { width: 100%; height: 100%; border: 0; background: #fff; display: block; }
-  #visual-wait { display: flex; align-items: center; justify-content: center; gap: 10px; height: 100%; color: var(--ink-3); font-size: 14px; background: var(--panel); }
-  #visual-wait[hidden], #visual-frame[hidden] { display: none; }
+  /* The option switcher: previews a variant (no reload, no staging); Choose stages it. */
+  #visual-switch { grid-row: 2; display: flex; align-items: center; gap: 10px; padding: 8px 24px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--ink-2); background: var(--panel); min-width: 0; }
+  #visual-switch[hidden] { display: none; }
+  #visual-switch .lbl { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  #visual-switch .vars { display: inline-flex; gap: 6px; }
+  .var { min-width: 34px; padding: 4px 9px; font-family: var(--serif); font-size: 15px; line-height: 1.2; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; }
+  .var.rec { border-color: var(--accent); color: var(--accent); } .var.lean { border-color: var(--taste); color: var(--taste); }
+  .var.chosen { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+  .var.staged { background: var(--stage-soft); border-color: var(--stage); color: var(--check-ink); }
+  .var.on { box-shadow: 0 0 0 2px var(--ink); }
+  .var .sm { font-family: var(--sans); font-size: 11px; }
+  #visual-switch .vdesc { min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #visual-switch .vdesc .tg { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-left: 8px; }
+  #visual-switch .tg.rec { color: var(--accent); } #visual-switch .tg.lean { color: var(--taste); } #visual-switch .tg.chosen { color: var(--ok); } #visual-switch .tg.staged { color: var(--stage); }
+  #choose { font-size: 13px; padding: 5px 12px; flex-shrink: 0; }
+  #choose:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); }
+  #visual-frame { grid-row: 3; width: 100%; height: 100%; border: 0; background: #fff; display: block; }
+  #visual-empty { grid-row: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; height: 100%; color: var(--ink-3); font-size: 14px; background: var(--panel); padding: 24px; text-align: center; }
+  #visual-empty .wait { display: flex; align-items: center; gap: 10px; }
+  #visual-empty p { margin: 0; max-width: 46ch; }
+  #visual-empty[hidden], #visual-frame[hidden] { display: none; }
 
   main { grid-row: 3; grid-column: 2; overflow-y: auto; padding: 36px 44px 60px; background: var(--panel); }
   .card { max-width: 680px; }
@@ -176,7 +208,18 @@
   main .empty { color: var(--ink-3); font-size: 14px; }
 
   aside { grid-row: 3; grid-column: 3; border-left: 1px solid var(--rule); display: grid; grid-template-rows: auto 1fr auto; min-height: 0; }
-  aside .head { padding: 20px 22px 12px; }
+  aside.collapsed { display: block; }
+  /* Collapsed, the panel is a rail: its name, the selected question's message count, and a dot
+     when another question has something new. One click opens it. */
+  .rail { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px 0; border: 0; border-radius: 0; background: var(--bg); color: var(--ink-3); font-size: 12px; }
+  .rail:hover { background: var(--hover); color: var(--ink); }
+  .rail .rail-label { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+  .rail .rail-count { min-width: 20px; padding: 1px 5px; border-radius: 999px; border: 1px solid var(--rule); background: var(--panel); font-size: 11px; text-align: center; }
+  .rail .udot { margin: 0; }
+  .rail .chev, .collapse .chev { width: 14px; height: 14px; } .rail .chev { transform: rotate(180deg); }
+  aside .head { padding: 20px 22px 12px; position: relative; }
+  aside .head .collapse { position: absolute; top: 14px; right: 14px; padding: 4px 6px; display: inline-flex; color: var(--ink-3); }
+  aside .head .collapse:hover { color: var(--ink); }
   aside .head h3 { margin: 0; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
   aside .head .sub { font-family: var(--serif); font-size: 16px; margin-top: 4px; }
   aside .head .count { font-size: 12px; color: var(--ink-3); margin-left: 8px; font-family: var(--sans); }
@@ -184,6 +227,7 @@
   .msg { padding: 12px 0; border-top: 1px solid var(--rule); position: relative; }
   .msg .who { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px; }
   .msg.user .who { color: var(--stage); } .msg.agent .who { color: var(--accent); }
+  .msg .who .on { color: var(--ink-3); }
   .msg.staged { background: var(--stage-soft); margin: 8px -10px 0; padding: 10px 28px 10px 10px; border-radius: 6px; border-top: 0; }
   .msg.pending { opacity: .7; } .msg.pending .who { display: flex; align-items: center; gap: 6px; }
   .msg .text { font-size: 14px; white-space: pre-line; }
@@ -210,17 +254,25 @@
   @keyframes ready { 0%, 100% { background-color: var(--ok); border-color: var(--ok); } 50% { background-color: var(--ok-pulse); border-color: var(--ok-pulse); } }
   footer .hint { font-size: 12px; color: var(--ink-3); } footer .warn { font-size: 12px; color: var(--accent); }
   footer .confirm { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
+  footer .confirm .redraw { display: inline-flex; align-items: center; gap: 5px; color: var(--stage); white-space: nowrap; }
+  footer .confirm .redraw input { margin: 0; accent-color: var(--stage); }
   #finish:disabled { background: var(--panel); border-color: var(--rule); color: var(--ink-3); animation: none; } #finish .spin { margin-right: 4px; }
 
-  /* Narrow screens. The desktop layout is three fixed columns (260px / flexible
-     / 33vw) in a 100vh grid. At 390px the middle column is crushed and the option
-     cards fall off the right edge. Below 760px the three panes stack into one
-     scrolling page and the action bar sticks to the bottom, so there is no need to
-     switch the browser into desktop mode. Tablets (768px) keep the three columns:
+  /* Narrow screens. The desktop layout is three columns (260px / flexible / the
+     discussion rail or 33vw) in a 100vh grid. At 390px the middle column is crushed
+     and the option cards fall off the right edge. Below 760px the panes stack into
+     one scrolling page and the action bar sticks to the bottom, so there is no need
+     to switch the browser into desktop mode. Tablets (768px) keep the three columns:
      that width already fits. */
   @media (max-width: 760px) {
-    body { grid-template-columns: 1fr; grid-template-rows: none; height: auto; min-height: 100vh; }
+    body, body.aside-open { grid-template-columns: 1fr; grid-template-rows: none; height: auto; min-height: 100vh; }
     #banner, header, nav, main, #visual, aside, footer { grid-column: 1 / -1; grid-row: auto; }
+    /* Visualize: the visual first, then the list and the discussion. */
+    body.visualize nav, body.visualize aside { order: 1; } body.visualize footer { order: 2; }
+    /* the rail becomes a "Discussion (n)" bar under the card */
+    .rail { flex-direction: row; justify-content: flex-start; padding: 12px 16px; gap: 10px; }
+    .rail .rail-label { writing-mode: horizontal-tb; transform: none; }
+    .rail .chev { margin-left: auto; order: 9; transform: rotate(90deg); }
 
     /* buttons carry white-space:nowrap; without wrapping they shove the
        status text past the right edge */
@@ -238,6 +290,7 @@
     .opt { padding: 12px; gap: 10px; }
 
     aside { border-left: 0; border-top: 1px solid var(--rule); grid-template-rows: auto auto auto; }
+    #visual-strip, #visual-switch { flex-wrap: wrap; padding: 8px 16px; }
     aside .msgs { overflow-y: visible; }
 
     /* "Send to Agent" must always be reachable */
@@ -288,7 +341,8 @@
   </div>
   <button id="terms-toggle" type="button">Terms</button>
   <div id="terms"></div>
-  <button id="visualize" type="button" hidden>Visualize</button>
+  <span id="mode" class="seg" role="group" aria-label="View" hidden><button id="mode-questions" type="button" aria-pressed="true">Questions</button><button id="mode-visualize" type="button" aria-pressed="false">Visualize</button></span>
+  <span id="auto-opt" hidden><input type="checkbox" id="auto-visualize"><label for="auto-visualize">Auto-visualize</label></span>
   <span id="subagent-opt" hidden><input type="checkbox" id="use-subagent" checked><label for="use-subagent">Use subagent</label><span id="subagent-info" class="info" tabindex="0" role="img" aria-label="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster." data-tip="Using subagents frees up your main context for grilling. You can switch this off once you are done grilling to make the visualization build faster.">i</span></span>
   <span class="status"><span class="dot" id="agent-dot"></span><span id="agent-status">connecting…</span></span>
   <button id="theme-toggle" type="button" data-mode="system">
@@ -300,7 +354,7 @@
 </header>
 <nav id="nav"><div class="empty">Connecting…</div></nav>
 <main id="main"></main>
-<section id="visual"><div id="visual-strip"></div><div id="visual-wait" hidden><span class="spin"></span>Drawing the first version…</div><iframe id="visual-frame" title="Visual" sandbox="allow-scripts"></iframe></section>
+<section id="visual"><div id="visual-strip"></div><div id="visual-switch" hidden></div><div id="visual-empty" hidden></div><iframe id="visual-frame" title="Question visual" sandbox="allow-scripts" hidden></iframe></section>
 <aside id="aside"></aside>
 <footer>
   <span class="staged-list" id="staged-list"></span>
@@ -344,6 +398,8 @@ const DRAW_GRACE_MS = 10 * 60 * 1000; // a background draw older than this is tr
 const DRAW_STUCK_NOTE = "The draw has run over 10 minutes; regenerate to try again.";
 const GONE_AFTER_MS = 3000;
 const CHECK = '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="10" fill="currentColor"/><path d="M6 10.4l2.6 2.6L14 7.4" stroke="#fff" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const VIS_ICON = '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="1" y="2" width="10" height="8" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M1 5h10" stroke="currentColor" stroke-width="1.3"/></svg>';
+const CHEVRON = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 // LAN mode mints a per-serve token and puts it in the page URL (?t=...). The
 // page carries it on every fetch so a LAN socket that requires it keeps working;
 // on loopback there is no token and the paths stay exactly as before.
@@ -351,13 +407,22 @@ const LAN_TOKEN = new URLSearchParams(location.search).get("t") || "";
 const withToken = (p) => LAN_TOKEN ? p + (p.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(LAN_TOKEN) : p;
 
 let S = null, raw = null, selected = null, storeKey = null;
-let lastOk = Date.now(), gone = false, confirmFinish = false, intentOpen = false;
+let lastOk = Date.now(), gone = false, confirmFinish = false, finishRedraw = true, intentOpen = false;
 // GET /listener: has an agent shown a sign of life lately? null until known, and an unknown
 // listener counts as listening, so the page never warns on a guess.
 let listener = null;
+// The variant the option switcher previews, for one question. It is not saved: a question opens
+// on its staged answer, else its recorded answer, else the recommendation (defaultVariant).
+let preview = { q: null, v: null };
 let local = fresh();
-function fresh() { return { staged: {}, pending: [], drafts: {}, view: "questions", vfeedback: [], subagent: true }; }
-function load() { local = fresh(); try { const v = localStorage.getItem(storeKey); if (v) local = Object.assign(fresh(), JSON.parse(v)); } catch {} }
+// aside: the discussion panel is open (a new grill starts with it collapsed). seen: per question,
+// the thread length and explore time last shown in the open panel, for the unread dots.
+function fresh() { return { staged: {}, pending: [], drafts: {}, view: "questions", subagent: true, aside: false, seen: null }; }
+function load() {
+  local = fresh();
+  try { const v = localStorage.getItem(storeKey); if (v) local = Object.assign(fresh(), JSON.parse(v)); } catch {}
+  delete local.vfeedback; // staged feedback on the grill-wide visual, which is gone
+}
 function save() { try { localStorage.setItem(storeKey, JSON.stringify(local)); } catch {} }
 
 // ---- data helpers ----
@@ -391,11 +456,34 @@ function chipRow(o) {
   return chips ? `<div class="chips">${chips}</div>` : "";
 }
 const locked = () => !!(S && S.finished);
-const visual = () => (S && S.visual && typeof S.visual === "object" ? S.visual : null);
-const hasVisual = () => { const v = visual(); return !!v && (Number(v.version) || 0) >= 1; }; // version 0 = first draw still running, nothing to show
-const drawing = () => { const v = visual(); return v && v.drawing && typeof v.drawing === "object" ? v.drawing : null; };
-const drawStuck = () => { const d = drawing(); return !!d && Date.now() - Date.parse(d.since || 0) > DRAW_GRACE_MS; };
-const activeView = () => (local.view === "visualize" && hasVisual() ? "visualize" : "questions");
+// Question visuals: each question may carry its own `visual` (a top-level one belongs to an older
+// grill and is ignored). Its file holds one variant per option, switched without a reload.
+const visualOf = (q) => (q && q.visual && typeof q.visual === "object" && !Array.isArray(q.visual) ? q.visual : null);
+const hasVisual = (q) => { const v = visualOf(q); return !!v && (Number(v.version) || 0) >= 1; }; // version 0 = first draw still running, nothing to show
+const anyVisual = () => qs().some(hasVisual);
+const drawingOf = (q) => { const v = visualOf(q); return v && v.drawing && typeof v.drawing === "object" ? v.drawing : null; };
+const drawStuck = (q) => { const d = drawingOf(q); return !!d && Date.now() - Date.parse(d.since || 0) > DRAW_GRACE_MS; };
+const staleVisuals = () => qs().filter((q) => hasVisual(q) && visualOf(q).stale === true);
+const activeView = () => (local.view === "visualize" && !(locked() && !anyVisual()) ? "visualize" : "questions");
+// Variant keys: option letters, "rec" for a question without options, "yours" for a free-text
+// answer. The agent lists what the file holds in visual.variants; without it, the options.
+const VARIANT_NAMES = { rec: "Suggested", yours: "Your answer" };
+const variantName = (k) => VARIANT_NAMES[k] || k;
+function variantsOf(q) {
+  const v = visualOf(q);
+  const listed = v && Array.isArray(v.variants) ? v.variants.filter((x) => typeof x === "string" && x) : [];
+  if (listed.length) return listed;
+  const ks = (q.options || []).map((o) => o.k);
+  return ks.length ? ks : ["rec"];
+}
+// The switcher opens on the staged answer, else the recorded answer, else the recommendation.
+function defaultVariant(q) {
+  const vs = variantsOf(q); const s = local.staged[q.id] || {};
+  const from = (a) => (!a ? null : a.kind === "text" ? (vs.includes("yours") ? "yours" : null) : keysOf(a).find((k) => vs.includes(k)) || null);
+  return from(s.answer) || (q.status === "answered" ? from(q.answer) : null) || recKeys(q).find((k) => vs.includes(k)) || (vs.includes("rec") ? "rec" : vs[0]);
+}
+const currentVariant = (q) => (preview.q === q.id && variantsOf(q).includes(preview.v) ? preview.v : defaultVariant(q));
+function select(id) { selected = id; preview = { q: null, v: null }; }
 // A multi question takes a set of options: rec.options and answer.options. A single one
 // takes rec.option and answer.option. keysOf reads either shape, so callers need not care.
 const isMulti = (q) => !!(q && q.multi);
@@ -422,22 +510,44 @@ async function poll() {
   }
   setTimeout(poll, 1000);
 }
+// ---- discussion news: what changed in a thread since the open panel last showed it ----
+const sigOf = (q) => `${Array.isArray(q.thread) ? q.thread.length : 0}|${(q.explore && q.explore.at) || ""}`;
+const agentReplies = (q) => (Array.isArray(q.thread) ? q.thread.filter((m) => m && m.who === "agent").length : 0);
+const isUnread = (q) => !!local.seen && Object.hasOwn(local.seen, q.id) && local.seen[q.id] !== sigOf(q);
+let lastSeen = null; // per question, the agent reply count and explore time at the previous poll
 function onState() {
   const key = "grill:" + (S.project || "") + ":" + (S.created || "");
-  if (key !== storeKey) { storeKey = key; load(); }
+  if (key !== storeKey) { storeKey = key; load(); lastSeen = null; }
   const handled = Number((S.agent || {}).handled) || 0;
   const still = local.pending.filter((p) => p.seq > handled);
   if (still.length !== local.pending.length) {
+    // Once an answer or a defer is recorded, move on to the next open question. A send that
+    // settles nothing (Explore deeper, a draw, a note) leaves you where you are.
+    const settled = local.pending.some((p) => p.seq <= handled && p.actions.some((a) => a.type === "answer" || a.type === "defer"));
     local.pending = still; save();
-    if (!still.length) { const cur = byId(selected); if (!cur || !isOpen(cur)) selected = (firstOpen() || {}).id || selected; }
+    if (!still.length && settled) { const cur = byId(selected); if (!cur || !isOpen(cur)) select((firstOpen() || {}).id || selected); }
   }
-  if (!selected || !byId(selected)) selected = (firstOpen() || {}).id || null;
+  if (!selected || !byId(selected)) select((firstOpen() || {}).id || null);
+  // A grill opened for the first time has read everything so far, and so has a question that
+  // just arrived; only what lands after that counts as news. A thread that got shorter was
+  // rewritten, not added to, so it holds nothing new either.
+  if (!local.seen) local.seen = {};
+  for (const q of qs()) {
+    const was = Object.hasOwn(local.seen, q.id) ? parseInt(local.seen[q.id], 10) : NaN;
+    if (!(was <= (Array.isArray(q.thread) ? q.thread.length : 0))) local.seen[q.id] = sigOf(q);
+  }
+  // An agent reply or an Explore table landing on the question you are looking at opens the
+  // panel; news on any other question only lights the dots.
+  const cur = byId(selected), was = cur && lastSeen && lastSeen[cur.id];
+  if (cur && was && (agentReplies(cur) > was.replies || (cur.explore && (cur.explore.at || "") !== was.explore))) local.aside = true;
+  lastSeen = Object.fromEntries(qs().map((q) => [q.id, { replies: agentReplies(q), explore: (q.explore && q.explore.at) || "" }]));
+  save();
   render();
 }
 
 // ---- staging ----
 const st = (id) => (local.staged[id] = local.staged[id] || {});
-const prune = (id) => { const s = local.staged[id]; if (s && !s.answer && !s.defer && !s.reopen && !(s.thread && s.thread.length)) delete local.staged[id]; };
+const prune = (id) => { const s = local.staged[id]; if (s && !s.answer && !s.defer && !s.reopen && !(s.thread && s.thread.length) && !(s.feedback && s.feedback.length)) delete local.staged[id]; };
 function stageAnswer(id, answer) { const s = st(id); s.answer = answer; delete s.defer; delete s.reopen; commit(); }
 // Clicking an option of a multi question toggles it in the staged set. The set starts from
 // what is staged, else from the recorded answer, so changing an answer edits it instead of
@@ -455,6 +565,9 @@ function stageKeys(q, keys) {
   stageAnswer(q.id, { kind: sameKeys(sorted, recKeys(q)) ? "accept" : "option", options: sorted });
 }
 function stageThread(id, text) { const s = st(id); (s.thread = s.thread || []).push(text); if (local.drafts[id]) delete local.drafts[id].thread; commit(); }
+// Feedback is a note in the question's own thread that also asks for a redraw of its visual.
+function stageFeedback(id, text) { const s = st(id); (s.feedback = s.feedback || []).push(text); if (local.drafts[id]) delete local.drafts[id].feedback; commit(); }
+function removeFeedback(id, i) { const s = local.staged[id]; if (s && s.feedback) { s.feedback.splice(i, 1); prune(id); } commit(); }
 function stageDefer(id) { const s = st(id); s.defer = true; delete s.answer; delete s.reopen; commit(); }
 function stageReopen(id) { const s = st(id); s.reopen = true; delete s.answer; delete s.defer; commit(); }
 function clearStaged(id) { const s = local.staged[id]; if (s) { delete s.answer; delete s.defer; delete s.reopen; prune(id); } commit(); }
@@ -465,38 +578,44 @@ const pendingActions = (id) => local.pending.flatMap((p) => p.actions.filter((a)
 const lastPending = () => local.pending[local.pending.length - 1] || null;
 const isExploring = (id) => pendingActions(id).some((a) => a.type === "explore");
 const pendingOfType = (t) => local.pending.flatMap((p) => p.actions.filter((a) => a.type === t));
-const isVisualizing = () => pendingOfType("visualize").length > 0 || (!!drawing() && !drawStuck());
+const isVisualizing = (q) => !!q && (pendingActions(q.id).some((a) => a.type === "visualize") || (!!drawingOf(q) && !drawStuck(q)));
 // Every draw request says whether the agent should hand the drawing to a subagent (the default,
 // which keeps the markup out of the interview's context) or draw it inline, which is faster once
 // the grilling is done.
 const useSubagent = () => local.subagent !== false;
+// Auto-visualize is the agent's to record (S.autoVisualize); until it does, the switch shows
+// the value just sent.
+const autoOn = () => { const p = pendingOfType("auto-visualize").pop(); return p ? !!p.on : !!(S && S.autoVisualize && S.autoVisualize.on === true); };
 const isFinishing = () => pendingOfType("finish").length > 0;
 const allSettled = () => qs().length > 0 && !qs().some(isOpen);
 // No agent is listening: sends are still accepted, but only queue until one resumes. Not shown
 // while the agent works, since it is busy with a send then rather than waiting for the next.
 const unheard = () => !!S && !S.finished && !gone && !!listener && listener.listening === false && (S.agent || {}).status !== "working";
 function stagedCount() {
-  let n = local.vfeedback.length + typedNotes().length;
-  for (const s of Object.values(local.staged)) n += (s.answer ? 1 : 0) + (s.defer ? 1 : 0) + (s.reopen ? 1 : 0) + (s.thread ? s.thread.length : 0);
+  let n = typedNotes().length;
+  for (const s of Object.values(local.staged)) n += (s.answer ? 1 : 0) + (s.defer ? 1 : 0) + (s.reopen ? 1 : 0) + (s.thread ? s.thread.length : 0) + (s.feedback ? s.feedback.length : 0);
   return n;
 }
-// Text typed in a discussion or feedback box but never added used to be left behind by Send
-// without a word (#32). A note commits you to nothing, so it now goes with the send as if
-// added: typedNotes lists every such box, on any question, and carryTyped stages them. A typed
-// free-text answer is different: it would answer the question, so it is never carried;
-// typedAnswers names those so the footer can say they will not be sent.
+// Text typed in a discussion box but never added used to be left behind by Send without a word
+// (#32). A note commits you to nothing, so it now goes with the send as if added: typedNotes
+// lists every such box, on any question, and carryTyped stages them. Each question has two
+// boxes: the discussion (`thread`) and, in Visualize, feedback on its visual (`feedback`, sent
+// only while that visual exists). A typed free-text answer is different: it would answer the
+// question, so it is never carried; typedAnswers names those so the footer can say they will
+// not be sent.
 const typed = (d, k) => (d && typeof d[k] === "string" ? d[k].trim() : "");
-const typedNotes = () => Object.entries(local.drafts).filter(([id, d]) => typed(d, "thread") && (id === "__visual" ? hasVisual() : !!byId(id))).map(([id, d]) => ({ id, text: typed(d, "thread") }));
-const typedAnswers = () => Object.entries(local.drafts).filter(([id, d]) => id !== "__visual" && typed(d, "free") && byId(id)).map(([id]) => id);
+const typedNotes = () => Object.entries(local.drafts).flatMap(([id, d]) => {
+  const q = byId(id); if (!q) return [];
+  const out = [];
+  if (typed(d, "thread")) out.push({ id, kind: "thread", text: typed(d, "thread") });
+  if (typed(d, "feedback") && hasVisual(q)) out.push({ id, kind: "feedback", text: typed(d, "feedback") });
+  return out;
+});
+const typedAnswers = () => Object.entries(local.drafts).filter(([id, d]) => typed(d, "free") && byId(id)).map(([id]) => id);
 function carryTyped() {
-  for (const { id, text } of typedNotes()) {
-    if (id === "__visual") local.vfeedback.push(text); else (st(id).thread = st(id).thread || []).push(text);
-    delete local.drafts[id].thread;
-  }
+  for (const { id, kind, text } of typedNotes()) { const s = st(id); (s[kind] = s[kind] || []).push(text); delete local.drafts[id][kind]; }
   commit();
 }
-function stageFeedback(text) { local.vfeedback.push(text); if (local.drafts.__visual) delete local.drafts.__visual.thread; commit(); }
-function removeFeedback(i) { local.vfeedback.splice(i, 1); commit(); }
 function buildActions() {
   const out = [];
   for (const [q, s] of Object.entries(local.staged)) {
@@ -504,8 +623,8 @@ function buildActions() {
     if (s.defer) out.push({ q, type: "defer" });
     if (s.answer) { const a = { q, type: "answer", kind: s.answer.kind }; if (s.answer.option) a.option = s.answer.option; if (s.answer.options) a.options = s.answer.options; if (s.answer.text) a.text = s.answer.text; out.push(a); }
     for (const t of s.thread || []) out.push({ q, type: "thread", text: t });
+    for (const t of s.feedback || []) out.push({ q, type: "visual-feedback", text: t, subagent: useSubagent() });
   }
-  for (const t of local.vfeedback) out.push({ type: "visual-feedback", text: t, subagent: useSubagent() });
   return out;
 }
 function sendState(needStaged = true) {
@@ -537,33 +656,62 @@ async function send() {
   carryTyped();
   const actions = buildActions();
   const j = await post(actions);
-  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; local.vfeedback = []; confirmFinish = false; commit(); }
+  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; confirmFinish = false; commit(); }
 }
-// Finish is not staged: confirming ships everything staged plus the finish action in one event, right away.
+// Finish is not staged: confirming ships everything staged plus the finish action in one event,
+// right away. With visuals it carries the drawing mode, and with out-of-date ones the confirm's
+// "Redraw them first" box.
 async function finishNow() {
   if (sendState(false).disabled || isFinishing()) return;
   carryTyped();
-  const actions = buildActions().concat([visual() ? { type: "finish", subagent: useSubagent() } : { type: "finish" }]);
+  const fin = { type: "finish" };
+  if (qs().some(visualOf)) fin.subagent = useSubagent();
+  if (staleVisuals().length) fin.redraw = finishRedraw;
+  const actions = buildActions().concat([fin]);
   const j = await post(actions);
-  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; local.vfeedback = []; confirmFinish = false; commit(); }
+  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.staged = {}; confirmFinish = false; commit(); }
 }
-// Visualize is not staged either: the first click (and Regenerate) is a generate request, like Explore deeper.
-async function visualize() {
-  if (sendState(false).disabled || isVisualizing()) return;
-  const actions = [{ type: "visualize", subagent: useSubagent() }];
+// Visualize is not staged either: the first draw of a question's visual (and Regenerate) is a
+// request on its own, like Explore deeper.
+async function visualize(id) {
+  const q = byId(id);
+  if (!q || locked() || sendState(false).disabled || isVisualizing(q)) return;
+  const actions = [{ q: id, type: "visualize", subagent: useSubagent() }];
   const j = await post(actions);
   if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.view = "visualize"; commit(); }
 }
-// Explore deeper skips staging: one click, one event, so the table is on its way at once.
+// Switching to Visualize on a question that has no visual asks for one; any other question you
+// pick there offers a Visualize button instead.
+function showVisualize() {
+  local.view = "visualize"; preview = { q: null, v: null }; commit();
+  const q = byId(selected);
+  if (q && !visualOf(q) && !isVisualizing(q)) visualize(q.id);
+}
+// Auto-visualize goes to the agent at once: it decides which new questions get drawn.
+async function setAuto(on) {
+  if (locked() || sendState(false).disabled) return render();
+  const actions = [{ type: "auto-visualize", on, subagent: useSubagent() }];
+  const j = await post(actions);
+  if (j) local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions });
+  commit();
+}
+// Explore deeper skips staging: one click, one event, so the table is on its way at once. The
+// table lands in the discussion panel, so the panel opens for it.
 async function explore(id) {
   if (sendState(false).disabled || isExploring(id)) return;
   const actions = [{ q: id, type: "explore" }];
   const j = await post(actions);
-  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); commit(); }
+  if (j) { local.pending.push({ seq: j.seq, at: new Date().toISOString(), actions }); local.aside = true; commit(); }
 }
 
 // ---- rendering ----
-function render() { withThreadScroll(() => withInputs(() => { document.body.classList.toggle("visualize", activeView() === "visualize"); renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter(); })); }
+function render() {
+  withThreadScroll(() => withInputs(() => {
+    document.body.classList.toggle("visualize", activeView() === "visualize");
+    document.body.classList.toggle("aside-open", !!local.aside);
+    renderBanner(); renderHeader(); renderNav(); renderMain(); renderVisual(); renderAside(); renderFooter();
+  }));
+}
 function tick() { renderStatus(); renderSend(); }
 function withInputs(fn) {
   const act = document.activeElement; const keep = act && act.tagName === "TEXTAREA" ? { id: act.id, s: act.selectionStart, e: act.selectionEnd } : null;
@@ -573,12 +721,11 @@ function withInputs(fn) {
 // Every render replaces the discussion panel with a fresh element, and a fresh element starts
 // at scrollTop 0: a send, or the agent's reply landing, used to throw you back to the top of a
 // long thread. Put the panel back where it was. One that could scroll and sat at the bottom
-// stays at the bottom so new messages arrive in view; a panel now showing another question, the
-// visual's feedback, or a pros and cons table it did not have before starts at the top, as
-// something you have not read yet should.
+// stays at the bottom so new messages arrive in view; a panel now showing another question, or a
+// pros and cons table it did not have before, starts at the top, as something you have not read
+// yet should.
 const BOTTOM_SLACK = 32; // px from the bottom that still counts as following the thread
 const threadKey = () => {
-  if (activeView() === "visualize") return "visual";
   const q = byId(selected);
   return "q:" + (selected || "") + (q && q.explore ? "|x" + (q.explore.at || "") : "");
 };
@@ -593,7 +740,11 @@ function withThreadScroll(fn) {
 }
 function renderBanner() {
   const b = $("banner");
-  if (S && S.finished) { b.className = "show done"; b.textContent = `Finished · the design doc was written to ${S.finished.doc || S.doc || "the doc path"}${S.finished.visual ? ", the visual to " + S.finished.visual : ""}${S.finished.at ? " at " + timeOf(S.finished.at) : ""}.`; }
+  if (S && S.finished) {
+    const f = S.finished; // `visual` is an older grill's single exported visual
+    b.className = "show done";
+    b.textContent = `Finished · the design doc was written to ${f.doc || S.doc || "the doc path"}${f.visuals ? ", the question visuals to " + f.visuals : f.visual ? ", the visual to " + f.visual : ""}${f.at ? " at " + timeOf(f.at) : ""}.`;
+  }
   else if (gone) { b.className = "show"; b.textContent = "Server gone. Resume the grill from the terminal; this tab reconnects by itself."; }
   else { b.className = ""; b.textContent = ""; }
 }
@@ -617,39 +768,103 @@ function renderHeader() {
     : `<div class="term" style="color:var(--ink-3)">No terms yet. The agent adds vocabulary here as it settles.</div>`;
   const levelled = qs().some(levelOf);
   $("levels-toggle").hidden = !levelled; if (!levelled) $("levels").classList.remove("show");
-  renderVisualizeButton();
+  renderModeToggle();
   renderStatus();
 }
-function renderVisualizeButton() {
-  const b = $("visualize"); const v = visual(); const lk = locked();
+function renderModeToggle() {
+  const lk = locked(), view = activeView(), n = qs().filter(hasVisual).length;
+  $("mode").hidden = lk && !n;
+  $("mode-questions").setAttribute("aria-pressed", String(view === "questions"));
+  $("mode-visualize").setAttribute("aria-pressed", String(view === "visualize"));
+  $("mode-visualize").textContent = `Visualize${n ? " · " + n : ""}`;
+  $("mode-visualize").title = "Draw the selected question: the page as decided so far, with each of its options as a variant";
   $("subagent-opt").hidden = lk; $("use-subagent").checked = useSubagent();
-  if (hasVisual()) { b.hidden = false; b.disabled = false; b.title = ""; b.textContent = activeView() === "visualize" ? "Questions" : `Visual · v${esc(v.version)}`; return; }
-  if (lk) { b.hidden = true; return; }
-  b.hidden = false;
-  if (isVisualizing()) { b.disabled = true; b.title = ""; b.innerHTML = `<span class="spin"></span>Visualizing…`; return; }
-  const gate = sendState(false); b.disabled = gate.disabled; b.textContent = "Visualize";
-  b.title = gate.disabled && gate.why ? gate.why : drawStuck() ? DRAW_STUCK_NOTE : "Draw a prototype or diagram of the design so far";
+  const auto = $("auto-visualize"), gate = sendState(false);
+  $("auto-opt").hidden = lk;
+  auto.checked = autoOn();
+  auto.disabled = gate.disabled || pendingOfType("auto-visualize").length > 0;
+  $("auto-opt").title = gate.disabled && gate.why ? gate.why : "Draw new questions as their round arrives, where the agent judges there is something to see. Off by default.";
 }
+// The visual pane always follows the selected question, in either mode, so the iframe only
+// reloads when the question or its version changes.
 function renderVisual() {
-  const v = visual(); const strip = $("visual-strip"); const frame = $("visual-frame");
-  const wait = $("visual-wait");
-  if (!v) { strip.innerHTML = ""; wait.hidden = true; frame.hidden = false; if (frame.dataset.v) { frame.removeAttribute("src"); delete frame.dataset.v; } return; }
-  if (!hasVisual()) { // first draw still running: no file to show yet, never request v0
-    if (frame.dataset.v) { frame.removeAttribute("src"); delete frame.dataset.v; }
-    frame.hidden = true; wait.hidden = false;
-    strip.innerHTML = `<span class="kind">${v.kind === "diagram" ? "Diagram" : "Prototype"}</span><span class="ver">first version on its way</span>`;
+  const q = byId(selected); const strip = $("visual-strip"), sw = $("visual-switch"), empty = $("visual-empty"), frame = $("visual-frame");
+  const clearFrame = () => { frame.hidden = true; if (frame.dataset.key) { frame.removeAttribute("src"); delete frame.dataset.key; delete frame.dataset.variant; } };
+  if (!q) { strip.innerHTML = ""; sw.hidden = true; empty.hidden = true; clearFrame(); return; }
+  const v = visualOf(q), lk = locked(), busy = isVisualizing(q), gate = sendState(false);
+  const QN = esc(q.id).toUpperCase();
+  const head = `<span class="qid">${QN}</span><span class="qt">${esc(q.title)}</span>`;
+  const kind = v ? `<span class="kind">${v.kind === "diagram" ? "Diagram" : "Prototype"}</span>` : "";
+  if (!hasVisual(q)) { // none yet, or the first draw is still running: never request v0
+    clearFrame(); sw.hidden = true; empty.hidden = false;
+    strip.innerHTML = head + kind + (busy ? `<span class="ver">first version on its way</span>` : "");
+    if (busy) empty.innerHTML = `<div class="wait"><span class="spin"></span>Drawing the first version of ${QN}…</div>`;
+    else if (lk) empty.innerHTML = `<p>${QN} was not visualized.</p>`;
+    else {
+      const why = gate.disabled ? (gate.why || "the agent is busy") : drawStuck(q) ? DRAW_STUCK_NOTE : "";
+      empty.innerHTML = `<p>${QN} has no visual yet. It draws the page as decided so far, with each of this question's options as a variant you can switch between.</p>
+        <button id="visualize-q" class="primary" type="button"${gate.disabled ? " disabled" : ""}${why ? ` title="${esc(why)}"` : ""}>Visualize ${QN}</button>`;
+      $("visualize-q").onclick = () => visualize(q.id);
+    }
     return;
   }
-  wait.hidden = true; frame.hidden = false;
-  const src = withToken(`/visual?v=${encodeURIComponent(v.version)}`);
-  if (frame.dataset.v !== String(v.version)) { frame.dataset.v = String(v.version); frame.setAttribute("src", src); } // only a version bump reloads the iframe; a background redraw keeps the current one
-  const busy = isVisualizing(); const gate = sendState(false); const lk = locked();
-  const regenTitle = gate.disabled ? (gate.why || "the agent is busy") : drawStuck() ? DRAW_STUCK_NOTE : "";
-  strip.innerHTML = `<span class="kind">${v.kind === "diagram" ? "Diagram" : "Prototype"}</span>
+  empty.hidden = true; frame.hidden = false;
+  const variant = currentVariant(q);
+  const key = `${q.id}:${v.version}`;
+  if (frame.dataset.key !== key) { // only a new question or a version bump reloads; a background redraw keeps the current one
+    frame.dataset.key = key; frame.dataset.variant = variant;
+    frame.setAttribute("src", withToken(`/visual?q=${encodeURIComponent(q.id)}&v=${encodeURIComponent(v.version)}`) + "#" + encodeURIComponent(variant));
+  } else if (frame.dataset.variant !== variant) { frame.dataset.variant = variant; postVariant(); }
+  const regenTitle = gate.disabled ? (gate.why || "the agent is busy") : drawStuck(q) ? DRAW_STUCK_NOTE : "";
+  const staleBy = Array.isArray(v.staleBy) ? v.staleBy.filter((x) => typeof x === "string") : [];
+  strip.innerHTML = `${head}${kind}
     <span class="ver"><b>v${esc(v.version)}</b>${v.note ? " · " + esc(v.note) : ""}${v.at ? " · " + timeOf(v.at) : ""}</span>
-    ${v.stale ? `<span id="visual-stale" role="status">Out of date · regenerate to include the latest decisions</span>` : ""}
+    ${v.stale ? `<span id="visual-stale" role="status">Out of date${staleBy.length ? " since " + staleBy.map((x) => esc(x).toUpperCase()).join(", ") : ""} · regenerate to include the latest decisions</span>` : ""}
     <span class="right">${busy ? `<span class="spin"></span> regenerating…` : lk ? "" : `<a href="#" id="regen"${regenTitle ? ` title="${esc(regenTitle)}"` : ""}>Regenerate</a>`}</span>`;
-  const r = $("regen"); if (r) r.onclick = (e) => { e.preventDefault(); visualize(); };
+  const r = $("regen"); if (r) r.onclick = (e) => { e.preventDefault(); visualize(q.id); };
+  renderSwitch(q, variant);
+}
+// The option switcher: one button per variant, marked like the option cards (recommended, your
+// answer, staged), and Choose to stage the one on screen exactly as clicking its card would.
+function renderSwitch(q, variant) {
+  const sw = $("visual-switch"), vs = variantsOf(q), lk = locked(), s = local.staged[q.id] || {};
+  const opt = (q.options || []).find((o) => o.k === variant);
+  const yours = levelOf(q) === "yours";
+  const marks = (k) => ({
+    rec: recKeys(q).includes(k) || (k === "rec" && !recKeys(q).length),
+    chosen: !(isMulti(q) && s.answer) && q.status === "answered" && (k === "yours" ? !!q.answer && q.answer.kind === "text" : keysOf(q.answer).includes(k)),
+    staged: k === "yours" ? !!s.answer && s.answer.kind === "text" : keysOf(s.answer).includes(k),
+  });
+  let choose = "";
+  if (opt && !lk) {
+    const base = s.answer && s.answer.kind !== "text" ? keysOf(s.answer) : !s.answer && q.status === "answered" ? keysOf(q.answer) : [];
+    const k = esc(variant);
+    if (isMulti(q)) choose = `<button id="choose" type="button" data-k="${k}">${base.includes(variant) ? "Remove" : "Choose"} ${k}</button>`;
+    else if (keysOf(s.answer).includes(variant)) choose = `<button id="choose" type="button" disabled>${k} staged</button>`;
+    else if (!s.answer && q.status === "answered" && keysOf(q.answer).includes(variant)) choose = `<button id="choose" type="button" disabled>${k} is your answer</button>`;
+    else choose = `<button id="choose" class="primary" type="button" data-k="${k}">Choose ${k}</button>`;
+  }
+  if (vs.length < 2 && !choose) { sw.hidden = true; sw.innerHTML = ""; return; }
+  sw.hidden = false;
+  const m = marks(variant);
+  const text = opt ? opt.text : variant === "yours" && q.answer && q.answer.kind === "text" ? q.answer.text : variant === "rec" ? (q.rec || {}).text : "";
+  sw.innerHTML = `<span class="lbl">Option</span><span class="vars">${vs.map((k) => {
+      const x = marks(k);
+      return `<button class="var${k === variant ? " on" : ""}${x.rec ? (yours ? " lean" : " rec") : ""}${x.chosen ? " chosen" : ""}${x.staged ? " staged" : ""}" type="button" data-var="${esc(k)}" aria-pressed="${k === variant}" title="${esc(variantName(k))}">${VARIANT_NAMES[k] ? `<span class="sm">${esc(VARIANT_NAMES[k])}</span>` : esc(k)}</button>`;
+    }).join("")}</span>
+    <span class="vdesc"><b>${esc(variantName(variant))}</b>${text ? " · " + md(text) : ""}${m.rec ? `<span class="tg ${yours ? "lean" : "rec"}">${yours ? "My lean" : "Recommended"}</span>` : ""}${m.chosen ? `<span class="tg chosen">Your answer</span>` : ""}${m.staged ? `<span class="tg staged">Staged</span>` : ""}</span>${choose}`;
+  sw.querySelectorAll("[data-var]").forEach((b) => (b.onclick = () => { preview = { q: q.id, v: b.dataset.var }; render(); }));
+  const c = $("choose");
+  if (c && !c.disabled) c.onclick = () => {
+    if (isMulti(q)) toggleOption(q, c.dataset.k);
+    else stageAnswer(q.id, { kind: c.dataset.k === (q.rec || {}).option ? "accept" : "option", option: c.dataset.k });
+  };
+}
+// The iframe is sandboxed without same-origin, so the page cannot reach into it: the variant
+// goes by postMessage (and as the URL fragment on load, for a visual that only reads that).
+function postVariant() {
+  const frame = $("visual-frame");
+  if (frame.dataset.variant && frame.contentWindow) frame.contentWindow.postMessage({ variant: frame.dataset.variant }, "*");
 }
 function renderStatus() {
   const dot = $("agent-dot"), txt = $("agent-status");
@@ -683,10 +898,14 @@ function renderNav() {
       if (lv) el.title = LEVEL_NAMES[lv] + (q.levelReason ? " · " + q.levelReason : "");
       const word = lv === "careful" || lv === "yours" ? `<span class="sword lvc-${lv}${q.status === "answered" ? " done" : ""}">${LEVEL_NAMES[lv]}</span>` : "";
       const mark = s ? `<span class="mark staged">staged</span>`
-        : pendingActions(q.id).some((a) => a.type !== "explore") ? `<span class="mark pending"><span class="spin"></span>sent</span>`
+        : pendingActions(q.id).some((a) => a.type !== "explore" && a.type !== "visualize") ? `<span class="mark pending"><span class="spin"></span>sent</span>`
         : `<span class="mark ${esc(q.status)}">${q.status === "answered" ? CHECK + esc(keyLabel(q.answer) || "text") : esc(q.status)}</span>`;
-      el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}</span>${mark}${word}`;
-      el.onclick = () => { selected = q.id; render(); };
+      const v = visualOf(q);
+      const vis = isVisualizing(q) ? `<span class="vis" title="Drawing its visual"><span class="spin"></span></span>`
+        : hasVisual(q) ? `<span class="vis${v.stale ? " stale" : ""}" title="Visual v${esc(v.version)}${v.stale ? " · out of date" : ""}">${VIS_ICON}</span>` : "";
+      const news = isUnread(q) && !(local.aside && q.id === selected) ? `<span class="udot" title="New in its discussion"></span>` : "";
+      el.innerHTML = `<span class="id">${esc(q.id).toUpperCase()}</span><span class="t">${esc(q.title)}${vis}${news}</span>${mark}${word}`;
+      el.onclick = () => { select(q.id); render(); };
       nav.appendChild(el);
     }
   }
@@ -746,7 +965,7 @@ function renderMain() {
       ${opts ? `<ul class="opts">${opts}</ul>` : ""}
       ${why}${stagedLine}${controls}
     </article>`;
-  main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { selected = a.dataset.go; render(); } }));
+  main.querySelectorAll("[data-go]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); if (byId(a.dataset.go)) { select(a.dataset.go); render(); } }));
   if (lk) return;
   main.querySelectorAll(".opt:not(.text-answer)").forEach((o) => (o.onclick = (e) => { if (e.target.closest("a")) return; if (isMulti(q)) toggleOption(q, o.dataset.opt); else stageAnswer(q.id, { kind: o.dataset.opt === rec.option ? "accept" : "option", option: o.dataset.opt }); }));
   const ar = $("accept-rec"); if (ar) ar.onclick = (e) => { e.preventDefault(); stageKeys(q, recKeys(q)); };
@@ -757,16 +976,25 @@ function renderMain() {
   const df = $("defer"); if (df) df.onclick = (e) => { e.preventDefault(); stageDefer(q.id); };
   const ro = $("reopen"); if (ro) ro.onclick = (e) => { e.preventDefault(); stageReopen(q.id); };
 }
+// The discussion panel: collapsed to a rail until opened (renderRail), then the selected
+// question's thread and Explore table in either mode. Its composer adds to the discussion in
+// Questions; in Visualize, on a question with a visual, it gives feedback that redraws it.
 function renderAside() {
-  const aside = $("aside");
-  if (activeView() === "visualize") return renderFeedback(aside);
-  const q = byId(selected);
-  if (!q) { aside.innerHTML = ""; return; }
+  const aside = $("aside"); const q = byId(selected);
+  aside.classList.toggle("collapsed", !local.aside);
+  if (!local.aside) return renderRail(aside, q);
+  const collapse = `<button id="aside-toggle" class="collapse" type="button" aria-expanded="true" title="Hide the discussion">${CHEVRON}</button>`;
+  if (!q) { aside.innerHTML = `<div class="head">${collapse}<h3>Discussion</h3></div>`; $("aside-toggle").onclick = toggleAside; return; }
   const s = local.staged[q.id] || {}; const lk = locked(); const d = local.drafts[q.id] || {};
+  const QN = esc(q.id).toUpperCase();
+  const feedbackMode = activeView() === "visualize" && hasVisual(q) && !lk;
   const thread = Array.isArray(q.thread) ? q.thread : [];
-  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${md(m.text)}</div></div>`).join("")
-    + pendingActions(q.id).filter((a) => a.type === "thread").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${md(a.text)}</div></div>`).join("")
-    + (s.thread || []).map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${md(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rm="${i}" title="Remove">×</a>`}</div>`).join("");
+  const on = (x) => (x ? ` · <span class="on">on the visual</span>` : "");
+  const stagedMsg = (t, i, rm, fb) => `<div class="msg user staged"><div class="who">you · staged${on(fb)}</div><div class="text">${md(t)}</div>${lk ? "" : `<a href="#" class="rm" data-${rm}="${i}" title="Remove">×</a>`}</div>`;
+  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}${on(m.on === "visual")}</div><div class="text">${md(m.text)}</div></div>`).join("")
+    + pendingActions(q.id).filter((a) => a.type === "thread" || a.type === "visual-feedback").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending${on(a.type === "visual-feedback")}</div><div class="text">${md(a.text)}</div></div>`).join("")
+    + (s.thread || []).map((t, i) => stagedMsg(t, i, "rm", false)).join("")
+    + (s.feedback || []).map((t, i) => stagedMsg(t, i, "rmf", true)).join("");
   const rec = q.rec || {};
   let explore = "";
   if (q.explore && Array.isArray(q.explore.rows) && q.explore.rows.length) {
@@ -776,30 +1004,37 @@ function renderAside() {
         `<tr><td class="k${recKeys(q).includes(r.option) ? " rec" : ""}">${esc(r.option)}</td><td class="pro">${li(r.pros)}</td><td class="con">${li(r.cons)}</td></tr>`).join("")}</tbody></table>`;
   }
   if (isExploring(q.id)) explore += `<div class="explore-wait"><span class="spin"></span> Exploring: the agent is writing a pros and cons table for this question.</div>`;
+  const empty = feedbackMode
+    ? `Nothing yet. Say what is wrong or missing in ${QN}'s visual; the agent redraws it on the next send. A note that contradicts an answered question reopens that question for you.`
+    : "Nothing yet. Ask anything about this question; the agent answers here on the next send.";
+  const compose = lk ? "" : feedbackMode
+    ? `<div class="compose"><textarea id="feedback-in" placeholder="Feedback on ${QN}'s visual…">${esc(d.feedback || "")}</textarea><button id="stage-feedback" type="button" title="Stage feedback (⌘↩); the next send redraws ${QN}'s visual">Add feedback and redraw</button></div>`
+    : `<div class="compose"><textarea id="thread-in" placeholder="Dig deeper on ${QN}…">${esc(d.thread || "")}</textarea><button id="stage-thread" type="button" title="Stage message (⌘↩)">Add to discussion</button></div>`;
   aside.innerHTML = `
-    <div class="head"><h3>Discussion</h3><div class="sub">${esc(q.id).toUpperCase()} · ${esc(q.title)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
-    <div class="msgs">${explore}${msgs || (explore ? "" : `<div class="empty-thread">Nothing yet. Ask anything about this question; the agent answers here on the next send.</div>`)}</div>
-    ${lk ? "" : `<div class="compose"><textarea id="thread-in" placeholder="Dig deeper on ${esc(q.id).toUpperCase()}…">${esc(d.thread || "")}</textarea><button id="stage-thread" type="button" title="Stage message (⌘↩)">Add to discussion</button></div>`}`;
+    <div class="head">${collapse}<h3>Discussion</h3><div class="sub">${QN} · ${esc(q.title)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
+    <div class="msgs">${explore}${msgs || (explore ? "" : `<div class="empty-thread">${empty}</div>`)}</div>
+    ${compose}`;
+  if (local.seen && local.seen[q.id] !== sigOf(q)) { local.seen[q.id] = sigOf(q); save(); } // shown, so read
+  $("aside-toggle").onclick = toggleAside;
   aside.querySelectorAll("[data-rm]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeThread(q.id, Number(a.dataset.rm)); }));
+  aside.querySelectorAll("[data-rmf]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeFeedback(q.id, Number(a.dataset.rmf)); }));
   if (lk) return;
-  $("stage-thread").onclick = () => { const t = $("thread-in").value.trim(); if (t) stageThread(q.id, t); };
-  $("thread-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).thread = e.target.value; save(); renderFooter(); };
+  if (feedbackMode) {
+    $("stage-feedback").onclick = () => { const t = $("feedback-in").value.trim(); if (t) stageFeedback(q.id, t); };
+    $("feedback-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).feedback = e.target.value; save(); renderFooter(); };
+  } else {
+    $("stage-thread").onclick = () => { const t = $("thread-in").value.trim(); if (t) stageThread(q.id, t); };
+    $("thread-in").oninput = (e) => { (local.drafts[q.id] = local.drafts[q.id] || {}).thread = e.target.value; save(); renderFooter(); };
+  }
 }
-function renderFeedback(aside) {
-  const v = visual(); const lk = locked(); const d = local.drafts.__visual || {};
-  const thread = Array.isArray(v.thread) ? v.thread : [];
-  const msgs = thread.map((m) => `<div class="msg ${m.who === "agent" ? "agent" : "user"}"><div class="who">${esc(m.who)}${m.at ? " · " + timeOf(m.at) : ""}</div><div class="text">${md(m.text)}</div></div>`).join("")
-    + pendingOfType("visual-feedback").map((a) => `<div class="msg user pending"><div class="who"><span class="spin"></span>you · sending</div><div class="text">${md(a.text)}</div></div>`).join("")
-    + local.vfeedback.map((t, i) => `<div class="msg user staged"><div class="who">you · staged</div><div class="text">${md(t)}</div>${lk ? "" : `<a href="#" class="rm" data-rmf="${i}" title="Remove">×</a>`}</div>`).join("");
-  aside.innerHTML = `
-    <div class="head"><h3>Visual feedback</h3><div class="sub">${v.kind === "diagram" ? "Diagram" : "Prototype"} · v${esc(v.version)}<span class="count">${thread.length} message${thread.length === 1 ? "" : "s"}</span></div></div>
-    <div class="msgs">${msgs || `<div class="empty-thread">Nothing yet. Say what is wrong or missing in the visual; the agent redraws it on the next send. If a note contradicts an answered question, that question is reopened for you.</div>`}</div>
-    ${lk ? "" : `<div class="compose"><textarea id="feedback-in" placeholder="Feedback on the visual…">${esc(d.thread || "")}</textarea><button id="stage-feedback" type="button" title="Stage feedback (⌘↩)">Add feedback</button></div>`}`;
-  aside.querySelectorAll("[data-rmf]").forEach((a) => (a.onclick = (e) => { e.preventDefault(); removeFeedback(Number(a.dataset.rmf)); }));
-  if (lk) return;
-  $("stage-feedback").onclick = () => { const t = $("feedback-in").value.trim(); if (t) stageFeedback(t); };
-  $("feedback-in").oninput = (e) => { (local.drafts.__visual = local.drafts.__visual || {}).thread = e.target.value; save(); renderFooter(); };
+function renderRail(aside, q) {
+  const n = q && Array.isArray(q.thread) ? q.thread.length : 0;
+  const QN = q ? esc(q.id).toUpperCase() : "";
+  const news = qs().some(isUnread);
+  aside.innerHTML = `<button id="aside-toggle" class="rail" type="button" aria-expanded="false" title="Show the discussion${q ? " on " + QN : ""}">${CHEVRON}<span class="rail-label">Discussion</span>${q ? `<span class="rail-count" title="${n} message${n === 1 ? "" : "s"} on ${QN}">${n}</span>` : ""}${news ? `<span class="udot" title="Something new in a discussion"></span>` : ""}</button>`;
+  $("aside-toggle").onclick = toggleAside;
 }
+function toggleAside() { local.aside = !local.aside; commit(); }
 function renderFooter() {
   const n = stagedCount(); const list = $("staged-list");
   const parts = Object.entries(local.staged).map(([id, s]) => {
@@ -807,10 +1042,10 @@ function renderFooter() {
     if (s.reopen) bits.push("reopen"); if (s.defer) bits.push("defer");
     if (s.answer) bits.push(keysOf(s.answer).length ? "→ " + keyLabel(s.answer) : "→ text");
     if (s.thread && s.thread.length) bits.push(`+${s.thread.length} msg`);
+    if (s.feedback && s.feedback.length) bits.push(`+${s.feedback.length} visual feedback`);
     return `${esc(id).toUpperCase()} ${bits.join(" ")}`;
   });
-  if (local.vfeedback.length) parts.push(`visual +${local.vfeedback.length} msg`);
-  for (const { id } of typedNotes()) parts.push(`${id === "__visual" ? "visual" : esc(id).toUpperCase()} +1 msg typed`);
+  for (const { id, kind } of typedNotes()) parts.push(`${esc(id).toUpperCase()} +1 ${kind === "feedback" ? "visual feedback" : "msg"} typed`);
   const lp = lastPending();
   const sent = !lp ? "" : unheard() ? `<span class="sent">Sent #${lp.seq} · queued until an agent listens</span>`
     : `<span class="sent"><span class="spin"></span>Sent #${lp.seq} · waiting for the agent</span>`;
@@ -820,13 +1055,20 @@ function renderFooter() {
   const fa = $("finish-area");
   if (locked()) fa.innerHTML = "";
   else if (isFinishing()) fa.innerHTML = `<button id="finish" type="button" disabled><span class="spin"></span>Finishing…</button>`;
-  else if (confirmFinish) fa.innerHTML = `<span class="confirm">Finish this grill? Everything staged goes with it; the agent writes the design doc and stops. <button id="finish-yes" class="ready" type="button">Finish grill</button><button id="finish-no" type="button">Cancel</button></span>`;
+  else if (confirmFinish) {
+    // Out-of-date question visuals: redraw them before the export (ticked), or export them as
+    // they are with a banner naming what they predate.
+    const stale = staleVisuals().map((q) => esc(q.id).toUpperCase());
+    const redraw = stale.length ? `<label class="redraw" title="Out of date: ${stale.join(", ")}. Unticked, they are exported as they are, with a banner naming the decisions they predate."><input type="checkbox" id="finish-redraw"${finishRedraw ? " checked" : ""}>Redraw them first</label>` : "";
+    fa.innerHTML = `<span class="confirm">Finish this grill? Everything staged goes with it; the agent writes the design doc${qs().some(hasVisual) ? ", exports the question visuals" : ""} and stops.${stale.length ? ` ${stale.length === 1 ? "The visual of " + stale[0] + " is" : "The visuals of " + stale.join(", ") + " are"} out of date.` : ""} ${redraw}<button id="finish-yes" class="ready" type="button">Finish grill</button><button id="finish-no" type="button">Cancel</button></span>`;
+  }
   else {
     const a = (S && S.agent) || {}; const gate = sendState(false);
     const ready = allSettled() && a.status !== "working" && !lp && !gone;
     fa.innerHTML = `<button id="finish" type="button" class="${ready ? "ready" : ""}"${gate.disabled ? " disabled" : ""}${ready ? ` title="Every question is settled. Finish writes the design doc."` : gate.disabled && gate.why ? ` title="${esc(gate.why)}"` : ""}>Finish grill</button>`;
   }
-  const f = $("finish"); if (f && !f.disabled) f.onclick = () => { confirmFinish = true; render(); };
+  const f = $("finish"); if (f && !f.disabled) f.onclick = () => { confirmFinish = true; finishRedraw = true; render(); };
+  const fr = $("finish-redraw"); if (fr) fr.onchange = (e) => { finishRedraw = e.target.checked; };
   const fy = $("finish-yes"); if (fy) fy.onclick = finishNow;
   const fn = $("finish-no"); if (fn) fn.onclick = () => { confirmFinish = false; render(); };
   renderSend();
@@ -840,7 +1082,10 @@ function renderSend() {
 $("send").onclick = send;
 $("intent").onclick = () => { if ($("intent").classList.contains("show")) { intentOpen = !intentOpen; render(); } };
 $("use-subagent").onchange = (e) => { local.subagent = e.target.checked; commit(); };
-$("visualize").onclick = () => { if (hasVisual()) { local.view = activeView() === "visualize" ? "questions" : "visualize"; commit(); } else visualize(); };
+$("auto-visualize").onchange = (e) => setAuto(e.target.checked);
+$("mode-questions").onclick = () => { local.view = "questions"; commit(); };
+$("mode-visualize").onclick = () => { if (activeView() !== "visualize") showVisualize(); };
+$("visual-frame").addEventListener("load", postVariant);
 $("terms-toggle").onclick = () => { $("levels").classList.remove("show"); $("terms").classList.toggle("show"); };
 $("levels-toggle").onclick = () => { $("terms").classList.remove("show"); $("levels").classList.toggle("show"); };
 // ---- theme: data-theme forces light/dark; "system" follows the OS via light-dark() ----
@@ -871,7 +1116,7 @@ document.addEventListener("keydown", (e) => {
     if (t) {
       if (act.id === "thread-in") { const q = byId(selected); if (q) { e.preventDefault(); stageThread(q.id, t); return; } }
       if (act.id === "free") { const q = byId(selected); if (q) { e.preventDefault(); (local.drafts[q.id] = local.drafts[q.id] || {}).free = ""; stageAnswer(q.id, { kind: "text", text: t }); return; } }
-      if (act.id === "feedback-in") { e.preventDefault(); stageFeedback(t); return; }
+      if (act.id === "feedback-in") { const q = byId(selected); if (q) { e.preventDefault(); stageFeedback(q.id, t); return; } }
     }
   }
   send();

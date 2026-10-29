@@ -267,3 +267,31 @@ None.
   records in state).
 - **Use subagent checkbox.** It stays and still applies per draw; with Auto-visualize, the
   agent uses the value from the switch's send. Not grilled.
+
+## Build notes (2026-10-30)
+
+How the build settled the open threads, and where it went beyond the grill:
+
+- **State shape.** `questions[].visual` carries `kind`, `version`, `at`, `note`, `stale`,
+  `drawing`, `queued`, plus two new fields: `variants` (the keys the file holds: option
+  letters, `rec` for a question without options, `yours` for a free-text answer) and
+  `staleBy` (the questions whose decisions it predates; it appends, feeds the "Out of date
+  since Q5" strip and the Finish banner). Grill-wide: `autoVisualize: { on, subagent }`.
+  Thread messages about a visual carry `"on": "visual"`. `finished.visuals` names the export
+  folder; `finished.visual` stays valid for older grills. A patch that gives a top-level
+  `visual` is rejected with a pointer to the per-question shape; an older session that has
+  one still patches.
+- **Send actions.** `visualize` and `visual-feedback` carry `q`; `auto-visualize` carries `on`
+  and `subagent` and is sent at once, like Explore deeper; `finish` carries `redraw` (the
+  confirm's box) only when a visual is out of date.
+- **`/visual?q=<id>&v=<version>`** serves `visuals/<id>.html`; a `q` that is not a plain id
+  (letters, digits, `-`, `_`) gets 400, so the id can never leave the folder. The validator
+  refuses a visual on a question whose id could not be a file name.
+- **Use subagent** applies per draw as before; Auto-visualize draws use the value sent with
+  the switch.
+- **Narrow screens** follow the proposal: the rail becomes a "Discussion (n)" bar under the
+  card, and Visualize puts the visual above the list.
+- **Beyond the grill.** The unread dot also marks the question's row in the list, so you can
+  see which question has news. The page no longer jumps to the next open question after a
+  send that settles nothing (Explore deeper, a draw, a note), so Regenerate on an answered
+  question keeps you on it.

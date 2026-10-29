@@ -12,7 +12,8 @@ Two files carry a grill. `state.json` is **yours alone**: questions, recommendat
 replies, statuses, agent status. `events.jsonl` is **the page's alone**: one line per Send.
 Nobody writes the other's file. The page polls `state.json`; how you receive events depends
 on the listening mode below.
-A third file, `visual.html`, is also yours (see [Visualize](#visualize) for drawing).
+The question visuals, one file per question under `<session>/visuals/`, are also yours (see
+[Visualize](#visualize) for drawing).
 
 ## Listening mode and turn boundaries
 
@@ -59,23 +60,26 @@ run it again.
 The patch is shaped like `state.json` (schema at the end):
 
 - `null` deletes a key, at any level: `"answer": null`, `"drawing": null`, `"visual": null`.
-- `agent` and `visual` merge one level: keys you give replace those keys; the rest stay.
+- `agent` merges one level: keys you give replace those keys; the rest stay.
 - `questions` is keyed by `id`. A known id merges one level: each field you give replaces
-  that field whole (`rec`, `answer`, `options`, `deps`, `explore`). An unknown id is a new
-  question, appended; it needs `round`, `title`, and `rec` (give `body` and `options` too);
-  `status: "open"`, `deps: []`, `options: []`, `thread: []`, `durable: false`, and
-  `updated: false` are filled in (`level` is not: give it). An unknown id without `title` is
-  an error, not a new question (ids are case-sensitive: `q7`, never `Q7`).
-- `thread` (on a question and on `visual`) and `visual.queued` append: list only the new
-  messages or bullets.
+  that field whole (`rec`, `answer`, `options`, `deps`, `explore`), except `visual`, which
+  merges one level itself. An unknown id is a new question, appended; it needs `round`,
+  `title`, and `rec` (give `body` and `options` too); `status: "open"`, `deps: []`,
+  `options: []`, `thread: []`, `durable: false`, and `updated: false` are filled in (`level`
+  is not: give it). An unknown id without `title` is an error, not a new question (ids are
+  case-sensitive: `q7`, never `Q7`).
+- A question's `thread`, and its visual's `queued` and `staleBy`, append: list only the new
+  messages, bullets, or ids.
 - `terms` is keyed by `term`: a known term is replaced whole, a new one appended.
-- Every other key (`note`, `intent`, `finished`, `doc`, …) is replaced whole.
+- There is no top-level `visual`: a patch that gives one is rejected (`"visual": null` only
+  clears an older grill's). Visuals live on their question.
+- Every other key (`note`, `intent`, `finished`, `doc`, `autoVisualize`, …) is replaced whole.
 
 **Never write the current time; the server stamps every time you leave out**: `agent.since`
-whenever you give `agent.status`, `at` on each appended message, `explore.at`, `visual.at`
-when `version` changes, `visual.drawing.since`, and `finished.at`. A time you give always
-wins; give one only when copying it from a send line (a user's thread message takes the
-send's `at`).
+whenever you give `agent.status`, `at` on each appended message, `explore.at`, a question
+visual's `at` when its `version` changes and its `drawing.since`, and `finished.at`. A time
+you give always wins; give one only when copying it from a send line (a user's thread
+message takes the send's `at`).
 
 A typical send (Q2 answered, a reply in Q4's thread, one new question, the acknowledgement):
 
@@ -172,7 +176,7 @@ described there, then return to listening.
 1. Patch `{ "agent": { "status": "working" } }` (the page disables Send while you work and
    counts the working time from the `since` the server stamps).
 2. Work through each item of `actions` in order, collecting its changes for the step 6
-   patch (every item but `finish` names a question id `q`):
+   patch (every item but `finish` and `auto-visualize` names a question id `q`):
    - `answer` → set that question's `answer` (`kind` accept|option|text, plus `option`,
      `options`, or `text`, copied as the send gives them) and `status: "answered"`. On a
      `multi` question the send carries `options`, the picked letters in order, and `accept`
@@ -189,16 +193,22 @@ described there, then return to listening.
      question's discussion panel. If writing it changes your mind, set a new `rec` and
      `updated: true`. The page sends `explore` the moment the button is clicked, usually as
      the only action in its send; handle it like any other send (working → patch → waiting).
-   - `visualize` → request a draw using [Subagent or inline](#subagent-or-inline) below.
-     The page sends it the moment the button (or Regenerate) is clicked, usually alone.
-   - `visual-feedback` → append `{who:"user", text, at}` (the send's `at`) to
-     `visual.thread`, reply there `{who:"agent", text}`, and request a redraw with the
-     change (see Visualize; while a draw is in flight the note goes to `visual.queued`
-     instead of starting a second one).
-     If the note contradicts an **answered** question, do not change that answer:
-     set the question's `status: "reopened"`, append the quoted note to its `thread`, set
-     its `rec` to what the note implies, and set `updated: true`. The answer changes only
-     when the user answers the reopened question. The visual follows the note either way.
+   - `visualize` → request a draw of question `q`'s visual using
+     [Subagent or inline](#subagent-or-inline) below. The page sends it the moment Visualize
+     QN (or Regenerate) is clicked, or Visualize mode is entered on a question with no
+     visual, usually alone.
+   - `visual-feedback` → append the user's note to question `q`'s own `thread`, tagged
+     `{who:"user", text, at, on:"visual"}` (the send's `at`), reply there
+     `{who:"agent", text, on:"visual"}`, and request a redraw of `q`'s visual with the
+     change (see Visualize; while that question's draw is in flight the note goes to its
+     `visual.queued` instead of starting a second one).
+     If the note contradicts an **answered** question (this one, or another one its visual
+     shows), do not change that answer: set that question's `status: "reopened"`, append
+     the quoted note to its `thread`, set its `rec` to what the note implies, and set
+     `updated: true`. The answer changes only when the user answers the reopened question.
+     The visual follows the note either way.
+   - `auto-visualize` → set `"autoVisualize": { "on": <on>, "subagent": <subagent> }` (see
+     [Auto-visualize](#auto-visualize)). It arrives alone, the moment the switch is clicked.
    - `finish` → see Finish below, after the other actions. For what the page includes when
      the user confirms, see [README: Use](README.md#use).
 3. If an answer changes the recommendation of a still-open question, give that question its
@@ -208,12 +218,17 @@ described there, then return to listening.
    each a new question entry with `deps` listing the question ids it depends on. New
    questions get the next round number. If the tree is fully walked, add no questions and
    set `note` to a short sentence saying every branch is settled and Finish is the next step.
-5. **Ordinary turns do not redraw the visual.** When an answer, reopen, or changed
-   recommendation affects what an existing visual shows, set `"visual": { "stale": true }`.
-   Leave `visual.html`, `version`, `at`, and `note` unchanged; the page marks it out of date
-   and the user can click **Regenerate** when ready. Do not launch a draw subagent merely
-   because the next round is ready. Explicit `visualize` and `visual-feedback` actions
-   still request a draw, and Finish still reconciles the exported visual.
+5. **Ordinary turns do not redraw visuals.** After the send's changes, judge each existing
+   question visual on its own: it draws the whole page as decided so far, so an answer,
+   reopen, or changed recommendation on *any* question can show on it. When one does, set
+   that question's `"visual": { "stale": true, "staleBy": ["<id of the question that
+   changed>"] }` (`staleBy` appends; skip an id already there). When a change does not
+   show on a visual's page, leave that visual alone, whatever `deps` say. Leave the file,
+   `version`, `at`, and `note` unchanged;
+   the page marks it out of date and the user clicks **Regenerate** when ready. Do not draw
+   merely because the next round is ready. Explicit `visualize` and `visual-feedback`
+   actions still request a draw, [Auto-visualize](#auto-visualize) draws new questions
+   when it is on, and Finish still reconciles the exported visuals.
 6. Send everything from steps 2–5 **in ONE patch**, together with
    `"agent": { "status": "waiting", "handled": <seq of this send> }`
    (the example under "Patching state.json" is this patch). One patch is one atomic swap,
@@ -222,7 +237,7 @@ described there, then return to listening.
    optional work: the page uses `handled` to clear the previous question's "sent" spinner
    and enable the next Send.
 7. Print exactly one terminal line, e.g.
-   `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions; visual v3 out of date`,
+   `grill: handled send #3 (Q2 → B, Q4 thread); round 4 has 2 questions; Q1 visual out of date`,
    and return to listening.
 
 ## Interview method (frontier per round)
@@ -282,118 +297,162 @@ decisions in order:
 
 ## Visualize
 
-The header's **Visualize** button asks for one artifact for the whole grill, the **visual**:
-a **prototype** when the topic is a user interface (a page, a panel, a flow the user clicks
-through), a **diagram** otherwise (architecture, data flow, sequence, state). Decide from the
-topic and the questions so far; say which in `visual.kind`; switch when feedback asks
-("make this a diagram"). Questions are the source of truth and the visual is derived from
+Visualize draws a **question visual**: one artifact for one question. It shows the page (or
+the system) as decided so far, with that question's region drawn once per option; each
+option's rendering is a **variant**, and all of them live in one file. The page has two
+modes, Questions and Visualize, toggled in the header. In Visualize the selected question's
+visual takes the card's column beside the question list, with an option switcher that flips
+between variants without a reload and a **Choose** button that stages the previewed option,
+exactly as clicking its card would. There is no grill-wide visual.
+
+Pick the kind per question: a **prototype** when the question changes something the user
+sees (a page, a panel, a flow they click through), a **diagram** otherwise (a rule, data
+flow, sequence, state). Record it in that question's `visual.kind`; switch when feedback asks
+("make this a diagram"). Questions are the source of truth and every visual is derived from
 them, never the other way round. When the topic is an improvement or a feature in an
 existing app, the prototype is drawn **in the context of that app**: the real page it lands
 on, with the app's own chrome and styling, so it looks like what will actually ship. You
 know where it lands from the grill; include that context in any subagent brief.
 
-**By default you never write `visual.html` yourself; a subagent draws it.** The file runs to hundreds
-of lines and is redrawn many times over a grill. Drawing it here would fill this session's
-context with markup and slow every later send. You stay the interviewer: you pick the kind,
-write the brief, and record the result with `patch`. The rules for the file itself live
-in `$SKILL/visual-brief.md`; the subagent reads them, you do not repeat them. See
-[Subagent or inline](#subagent-or-inline) for when you draw the file yourself.
+**By default you never write a visual yourself; a subagent draws it.** A file runs to
+hundreds of lines and is redrawn many times over a grill. Drawing it here would fill this
+session's context with markup and slow every later send. You stay the interviewer: you pick
+the kind, write the brief, and record the result with `patch`. The rules for the file
+itself live in `$SKILL/visual-brief.md`; the subagent reads them, you do not repeat them.
+See [Subagent or inline](#subagent-or-inline) for when you draw the file yourself.
 
-Draw only for the first Visualize click, Regenerate, explicit visual feedback, or the
-Finish reconcile. A requested redraw brings the visual up to date with **all** current
+Draw only for a `visualize` action (Visualize QN, Regenerate, or Visualize mode entered on a
+question with no visual), `visual-feedback`, [Auto-visualize](#auto-visualize), or the
+Finish reconcile. A requested redraw brings that visual up to date with **all** current
 questions, including changes accumulated since its last version, not just the triggering
-send. Ordinary interview turns only mark an affected visual stale.
+send. Ordinary interview turns only mark affected visuals stale (Handling a send, step 5).
+
+Every question's visual is its own: `<qid>` below is the question's id, `<qid>.visual` its
+state, `<session>/visuals/<qid>.html` its file. Draws for different questions run **in
+parallel**, one subagent each; a question has at most one draw in flight. One send that asks
+for several questions (two Visualize clicks queued, feedback on two visuals, Auto-visualize
+on a round of three) launches one subagent per question, together.
 
 For subagent draws, follow these steps. **The draw runs in the background and the interview
 goes on**: the send that requested it is handled the moment the brief is out, so the user
 keeps answering and sending while the subagent draws.
 
-1. Stat `<session>/visual.html` (do not read it) and note its modification time; a first
-   draw has none. Then launch ONE subagent with the Agent tool (it runs in the background
-   and you get a completion notice later), general-purpose type, prompt filled in from this
-   template (use the absolute path of `$SKILL`):
+1. Stat `<session>/visuals/<qid>.html` (do not read it) and note its modification time; a
+   first draw has none. Then launch ONE subagent for the question with the Agent tool (it
+   runs in the background and you get a completion notice later), general-purpose type,
+   prompt filled in from this template (use the absolute path of `$SKILL`):
 
-   > Draw the visual for a grill-with-ui design interview. Read `$SKILL/visual-brief.md`
-   > first and follow it exactly. Session folder: `<session>`. Project root: `<project>`.
-   > Kind: **prototype** | **diagram**.
+   > Draw the question visual for **<qid>** of a grill-with-ui design interview. Read
+   > `$SKILL/visual-brief.md` first and follow it exactly. Session folder: `<session>`.
+   > Project root: `<project>`. Kind: **prototype** | **diagram**.
    > Context: **change to an existing app**, landing in `<route, page, or component>`;
    > match that page's real look and surroundings. | **New UI**, nothing to match. |
    > **Diagram of existing code** in `<modules>`. | **Diagram of a new system**.
+   > Variants: `A`, `B`, `C` (the options) | `rec` (no options) | plus `yours`, the
+   > user's free-text answer: "<text>". Default variant: `<answer, else recommendation>`.
    > **First cut** from the questions in `state.json`.
-   > — or —
-   > **Redraw** of the existing `visual.html`. Change only what follows; keep everything
-   > else stable:
+   > *or*
+   > **Redraw** of the existing `visuals/<qid>.html`. Change only what follows; keep
+   > everything else stable:
    > - Q3 answered B: the discussion panel moves to the right third
    > - feedback: "make the sidebar collapsible"
-   > Write `<session>/visual.html` and reply with ONE line saying what the visual now
-   > shows (or what changed).
+   > Write `<session>/visuals/<qid>.html` and reply with ONE line saying what the visual
+   > now shows (or what changed).
 
-   One send with several triggers (feedback plus answers that change the visual) is one
-   draw with all of them in the list.
-2. Put the draw into the send's one step-6 patch. On a first draw:
-   `"visual": { "kind": …, "version": 0, "thread": [], "stale": false, "drawing": { "seq": <seq> } }`.
-   On a redraw: `"visual": { "stale": false, "drawing": { "seq": <seq> } }`;
-   the merge keeps `version`, `at`, `note`, and `thread`, and the file stays as it is. The
-   same patch finishes the send as usual (`agent.handled`, `"status": "waiting"`); print
-   the terminal line with "visual drawing" in it and return to listening. The page reads
-   `drawing`: on a first draw it stays on the questions with the header button reading
-   Visualizing… and flips to the visual by itself when v1 lands; on a redraw it keeps the
-   current version on screen with regenerating… in the strip. Send stays enabled
-   throughout.
-3. **While a draw is in flight**, handle sends normally. An answer, reopen, or changed
-   recommendation that affects the visual sets `"stale": true` as usual (the in-flight
-   draw did not see it). A new draw request (Visualize, Regenerate, or visual feedback)
-   does not start a second subagent: reply in the thread now and append the request as
-   one bullet, `"visual": { "queued": ["feedback: …"] }`. Never run two draws at once;
-   both would write the same file.
-4. **When the draw lands** (its completion notice wakes you): stat `<session>/visual.html`
-   again (do not read it) and confirm it exists with a modification time later than the one
-   you noted at launch. Then patch `"visual": { "version": <version + 1>, "note": …, "drawing": null }`
+   One send with several triggers for the same question (feedback plus answers that change
+   its visual) is one draw with all of them in the list.
+2. Put the draw into the send's one step-6 patch, on that question only. On a first draw:
+   `{ "id": "<qid>", "visual": { "kind": …, "version": 0, "stale": false, "drawing": { "seq": <seq> } } }`.
+   On a redraw: `{ "id": "<qid>", "visual": { "stale": false, "staleBy": null, "drawing": { "seq": <seq> } } }`;
+   the merge keeps `version`, `at`, and `note`, and the file stays as it is. The same patch
+   finishes the send as usual (`agent.handled`, `"status": "waiting"`); print the terminal
+   line with "Q3 visual drawing" in it and return to listening. The page reads `drawing`:
+   on a first draw it shows "Drawing the first version of Q3…" in the visual's place and
+   loads the file by itself when v1 lands; on a redraw it keeps the current version on
+   screen with regenerating… in the strip. Send stays enabled throughout.
+3. **While a question's draw is in flight**, handle sends normally. An answer, reopen, or
+   changed recommendation that shows on that visual sets `"stale": true` as usual (the
+   in-flight draw did not see it). A new draw request for **the same question** (Regenerate
+   or feedback) does not start a second subagent: reply in its thread now and append the
+   request as one bullet, `{ "id": "<qid>", "visual": { "queued": ["feedback: …"] } }`.
+   Never run two draws of one question at once; both would write the same file. A request
+   for **another** question starts that question's own draw at once.
+4. **When a draw lands** (its completion notice wakes you): stat its file again (do not read
+   it) and confirm it exists with a modification time later than the one you noted at
+   launch. Then patch that question only:
+   `{ "id": "<qid>", "visual": { "version": <version + 1>, "note": …, "variants": [ … ], "drawing": null } }`
    (0 → 1 on a first draw; `note` is one line naming what changed, taken from the
-   subagent's reply: "v3: discussion panel moved to the right per Q3"). Leave `stale` out
-   of it. If `visual.queued` is non-empty, use those bullets as the next draw's change list
-   and choose its mode under [Subagent or inline](#subagent-or-inline). For a background
-   draw, repeat step 1 and in the same patch give
-   `"drawing": { "seq": <last handled seq> }` instead of `null`, plus
-   `"queued": null`. Print one line ("grill: visual v3 landed", or "… landed; drawing v4
-   from 2 queued notes") and return to listening. Never bump without a new file and never let a
-   new file land without a bump; the page reloads the iframe only on a bump.
-5. If the subagent fails or the file did not change: on a first draw patch
-   `"visual": null` and a `note` (the sentence above the question list) saying the draw
-   failed and Visualize can be clicked again; on a redraw patch
-   `"visual": { "drawing": null, "thread": [{ "who": "agent", "text": … }] }` saying so. Do
-   not bump either way. Return to listening so the user can retry.
+   subagent's reply: "v3: filter pane moved to the left rail per Q3"; `variants` lists the
+   variant keys the file holds, from the brief). Leave `stale` out of it. Patching only the
+   landed question keeps concurrent draws apart: each patch is atomic and merges one
+   question's `visual`, so one draw's completion never overwrites another's state. If its
+   `queued` is non-empty, use those bullets as the next draw's change list and choose its
+   mode under [Subagent or inline](#subagent-or-inline). For a background draw, repeat
+   step 1 and in the same patch give `"drawing": { "seq": <last handled seq> }` instead of
+   `null`, plus `"queued": null`. Print one line ("grill: Q3 visual v3 landed", or "…
+   landed; drawing v4 from 2 queued notes") and return to listening. Never bump without a
+   new file and never let a new file land without a bump; the page reloads the iframe only
+   on a bump.
+5. If the subagent fails or the file did not change: on a first draw patch that question's
+   `"visual": null` and append an agent message to its `thread` saying the draw failed and
+   Visualize can be clicked again; on a redraw patch `"visual": { "drawing": null }` and the
+   same kind of thread message. Do not bump either way. Return to listening so the user can
+   retry.
 
 ### Subagent or inline
 
-The page has a **Use subagent** checkbox beside Visualize, checked by default. Every draw
-request carries its value as `subagent`: the `visualize` and `visual-feedback` actions, and
-the `finish` action when a visual exists. A missing `subagent` means `true` (an older page).
+The page has a **Use subagent** checkbox in the header, checked by default. Every draw
+request carries its value as `subagent`: the `visualize`, `visual-feedback`, and
+`auto-visualize` actions, and the `finish` action when any question has a visual. A missing
+`subagent` means `true` (an older page).
 
 - `subagent: true` → the background subagent draw above. Background draws require a
   top-level session: a subagent's own background tasks are dropped when its turn ends.
   If you are yourself a subagent or have no subagent tool, use the inline procedure below.
-- `subagent: false` → the user wants a faster draw. Draw it
-  **inline, in this turn**: read `$SKILL/visual-brief.md` and write `<session>/visual.html`
-  yourself, from the same kind, context, and change list you would have put in the brief.
-  Before you start, patch the first draw's `visual` (kind, `"version": 0`, `thread: []`,
-  `"stale": false`) or, on a redraw, `"stale": false`, together with
-  `"drawing": { "seq": <seq> }`, so the page shows Visualizing… (or regenerating…) while
-  `agent.status` stays `working`. When the file is written, the send's one step-6 patch
-  carries `"version": <version + 1>`, the `note`, `"drawing": null`, and the usual
-  `agent.handled` and `"status": "waiting"`. Send stays disabled while you draw; that is the
-  trade the user chose.
-- A subagent draw already in flight still wins: never two draws at once. Queue the request
-  in `visual.queued` as usual; when the in-flight draw lands, draw the queued bullets the way
-  the newest queued request asked (inline when its `subagent` was `false`). Recover that
-  flag from the request in `events.jsonl` if needed; `visual.queued` holds only text bullets.
-  For queued inline work, set `agent.status` to `working` and clear `queued` when marking
-  `drawing`, then publish the completed version and return to `waiting`; leave `handled`
-  unchanged because the queued sends were already acknowledged.
+- `subagent: false` → the user wants a faster draw. Draw it **inline, in this turn**: read
+  `$SKILL/visual-brief.md` and write `<session>/visuals/<qid>.html` yourself, from the same
+  kind, context, variants, and change list you would have put in the brief. Before you
+  start, patch the question's first-draw `visual` (kind, `"version": 0`, `"stale": false`)
+  or, on a redraw, `"stale": false` and `"staleBy": null`, together with
+  `"drawing": { "seq": <seq> }`, so the page shows the drawing state while `agent.status`
+  stays `working`. When the file is written, the send's one step-6 patch carries
+  `"version": <version + 1>`, the `note`, `variants`, `"drawing": null`, and the usual
+  `agent.handled` and `"status": "waiting"`. Send stays disabled while you draw; that is
+  the trade the user chose.
+- **Several inline draws in one send** (Auto-visualize on a round, feedback on two visuals,
+  Finish redraws): publish everything else first, so the user can read the new round while
+  you draw. That first patch carries the answers, replies, and next round, `agent.handled`,
+  `"agent": { "status": "working" }` (not `waiting`), and every question's `drawing`. Then
+  draw the questions one after another, patching each question's `version`, `note`,
+  `variants`, and `"drawing": null` as its file is written, and set
+  `"agent": { "status": "waiting" }` with the last one. Send stays disabled until then.
+- A subagent draw of the same question already in flight still wins: never two draws of
+  one question at once. Queue the request in that question's `visual.queued` as usual;
+  when the in-flight draw lands, draw the queued bullets the way the newest queued request
+  asked (inline when its `subagent` was `false`). Recover that flag from the request in
+  `events.jsonl` if needed; `queued` holds only text bullets. For queued inline work, set
+  `agent.status` to `working` and clear `queued` when marking `drawing`, then publish the
+  completed version and return to `waiting`; leave `handled` unchanged because the queued
+  sends were already acknowledged.
 
-Feedback arrives as `visual-feedback` actions (see Handling a send); sending visual feedback
-explicitly requests a redraw. Answers and question discussions do not. On Finish the visual
-is reconciled with the decisions and copied next to the doc.
+Feedback arrives as `visual-feedback` actions (see Handling a send); it is written in
+Visualize, where the composer reads **Add feedback and redraw**, and explicitly requests a
+redraw. Answers and question discussions (written in Questions, where the composer reads
+**Add to discussion**) do not. On Finish the visuals are reconciled with the decisions and
+copied next to the doc.
+
+### Auto-visualize
+
+The header's **Auto-visualize** switch is off by default. Clicking it sends
+`{ "type": "auto-visualize", "on": true|false, "subagent": … }` at once; record it as
+`"autoVisualize": { "on": …, "subagent": … }`. While it is on, every round you publish
+(Handling a send, step 4) also requests a draw for each **new** question you judge
+**visual**: one whose answer changes what the user would see on the page, or the shape of
+the system a diagram would show. Skip questions with little to show (a timing rule, a
+threshold, a naming choice); they stay one click away. Use the recorded `subagent` for
+these draws, under the rules above: background subagents launched together with the round's
+patch, or inline after the round is published, with Send held. Turning the switch on does
+not draw questions already on the page, and turning it off cancels nothing in flight.
 
 ## Terminal input
 
@@ -409,35 +468,47 @@ also be changed this way ("write the doc to …" → patch `"doc"`).
 On a `finish` action, or when the user says finish in the terminal:
 
 1. Write the design doc to `doc` (relative to the project root). It is exhaustive and
-   self-contained, in this order: a one-paragraph summary (linking the visual at
-   `docs/<slug>-visual.html` when there is one, see step 3); **Terms** (each with its
-   Avoid list); **Why** (the problem in the user's words); **Locked decisions** (every
-   `durable` question: the decision, a ratings table with options as rows and axes as
-   columns, the decision in bold and every rating as a word (good / mixed / poor, a dash for
-   `na` or an unrated axis; never invent ratings), then the rejected options and why each
-   lost, applying the consistency rule and its escape from Interview method);
+   self-contained, in this order: a one-paragraph summary (naming the visuals folder,
+   `docs/<slug>-visuals/`, when step 3 exports any); **Terms** (each with its Avoid list);
+   **Why** (the problem in the user's words); **Locked decisions** (every `durable`
+   question: the decision, a ratings table with options as rows and axes as columns, the
+   decision in bold and every rating as a word (good / mixed / poor, a dash for `na` or an
+   unrated axis; never invent ratings), then the rejected options and why each lost,
+   applying the consistency rule and its escape from Interview method);
    **Routine choices** (every other answered question, one bullet each);
    **Verified facts** (anything you established by exploring rather than asking, if any);
    **Risks**; **Deferred**
    (deferred questions, with what would reopen them); **Open threads** (discussion points
-   that ended without a decision). Importance levels stay out of the doc. Do not compress: a
-   reader with no access to the session must be able to build from it.
+   that ended without a decision). Every decision whose question has an exported visual
+   links it, opened on the chosen variant: `[visual](<slug>-visuals/q3.html#B)` (a
+   free-text answer opens on `#yours`). Importance levels stay out of the doc. Do not
+   compress: a reader with no access to the session must be able to build from it.
 2. Patch `"finished": { "doc": … }` and `"agent": { "status": "waiting" }`
    (after a page Finish this is the send's one patch, with `handled`); the page shows the
    finished banner and locks staging.
-3. If `state.visual` exists, it must be reconciled with every answered question before it
-   is exported. If no draw is in flight and it is not stale and nothing disagrees, copy
-   `<session>/visual.html` to `docs/<slug>-visual.html` next to the doc (same folder, same
-   slug, `-visual.html`) and add `"visual": <that path>` to `finished` (it is replaced
-   whole, so give `doc` again, or fold it into the step 2 patch). Otherwise request one
-   reconciling draw (or let the in-flight one land), return to listening, and when it lands
-   copy the file and patch `finished` with `visual` then. The reconciling draw uses the
-   `finish` action's `subagent` under [Subagent or inline](#subagent-or-inline): if no draw
-   is in flight and inline drawing is selected, draw before step 2 and export it in the same patch. An in-flight
-   draw must land first; queue any further reconciliation under those same rules.
+3. Export every question visual (a question whose `visual.version` is 1 or more) to
+   `docs/<slug>-visuals/<qid>.html`, next to the doc (same folder, the doc's slug plus
+   `-visuals`). Questions never visualized are not drawn at Finish. Each must be reconciled
+   with every answered question before it is exported:
+   - A draw in flight lands first (or fails, step 5 of Visualize); queue any further
+     reconciliation under the same rules.
+   - A visual that is not stale and that nothing contradicts is copied as it is.
+   - A stale visual, when the `finish` action's `redraw` is `true` (the confirm's **Redraw
+     them first** box, ticked by default; absent means `true`): request one reconciling
+     draw of it, using the action's `subagent` under
+     [Subagent or inline](#subagent-or-inline), and copy the file when it lands.
+   - A stale visual, when `redraw` is `false`: copy it as it is, and in the copy insert one
+     banner element right after the `<body>` tag, such as
+     `<div style="position:sticky;top:0;z-index:99;padding:8px 14px;background:#fbe9e4;color:#9a3a26;font:14px system-ui">Out of date: drawn before Q5 and Q7 were decided.</div>`,
+     naming the questions in its `staleBy`. Do not edit the session's own file.
+
+   Then add `"visuals": "docs/<slug>-visuals/"` to `finished` (it is replaced whole, so
+   give `doc` again). If everything can be exported without waiting for a draw (no draw in
+   flight, and no redraw or only inline ones done before step 2), fold this into the step 2
+   patch; otherwise return to listening and patch `finished` once the last export is done.
 4. Once there is no draw in flight and the exports are complete, stop the persistent
    Monitor with TaskStop, or stop the server as described in Wait mode.
-5. Print one line with the doc path (and the visual's). End.
+5. Print one line with the doc path (and the visuals folder). End.
 
 ## Wait mode (agents without a Monitor tool)
 
@@ -477,8 +548,8 @@ Keep this loop active in the current agent turn:
    is still active, resume it. Publishing a finished prototype is not finishing the grill.
 
 The user does not need to type "continue" in the terminal to deliver a browser Send.
-Only stop under the turn-boundary conditions above. On Finish, once the doc and any final
-visual are saved, stop the server using the verified `pid` in `<session>/server.json`.
+Only stop under the turn-boundary conditions above. On Finish, once the doc and every
+exported visual are saved, stop the server using the verified `pid` in `<session>/server.json`.
 
 ## state.json
 
@@ -500,15 +571,8 @@ below. For the Your-call rule, see Interview method; when changing a rated quest
   "topic": "…", "intent": "why this grill exists, 1-2 sentences", "doc": "docs/x-design.md", "project": "/abs/path", "created": "ISO",
   "agent": { "status": "waiting|working", "since": "ISO", "handled": 3 },
   "note": "optional short sentence shown above the question list",
-  "finished": { "doc": "docs/x-design.md", "visual": "docs/x-visual.html", "at": "ISO" },  // only after Finish
-  "visual": {                                                   // only after a visualize action
-    "kind": "prototype|diagram", "version": 3, "at": "ISO",
-    "note": "v3: discussion panel moved to the right per Q3",
-    "stale": false,                                            // true after relevant ordinary decisions; no redraw or version bump
-    "drawing": { "since": "ISO", "seq": 12 },                  // while a draw runs; version is 0 before the first lands
-    "queued": ["feedback: make the sidebar collapsible"],      // draw requests that arrived during a draw; next draw takes them
-    "thread": [{ "who": "user|agent", "text": "…", "at": "ISO" }]
-  },
+  "finished": { "doc": "docs/x-design.md", "visuals": "docs/x-visuals/", "at": "ISO" },  // only after Finish
+  "autoVisualize": { "on": true, "subagent": true },            // only after an auto-visualize action
   "terms": [{ "term": "…", "def": "…", "avoid": ["…"] }],
   "axes": [{ "key": "ux", "name": "User experience" }, …],     // optional; absent = ux, correct, risk, cost
   "questions": [{
@@ -520,7 +584,15 @@ below. For the Your-call rule, see Interview method; when changing a rated quest
     "status": "open|answered|deferred|reopened", "durable": false, "updated": false,
     "answer": { "kind": "accept|option|text", "option": "A", "text": "…" },  // multi: { "kind": "accept|option", "options": ["A","C"] }
     "explore": { "at": "ISO", "rows": [{ "option": "A", "pros": ["…"], "cons": ["…"] }] },  // after an explore action
-    "thread": [{ "who": "user|agent", "text": "…", "at": "ISO" }]
+    "thread": [{ "who": "user|agent", "text": "…", "at": "ISO", "on": "visual" }],  // "on": only on feedback about the visual and its reply
+    "visual": {                                                 // only once this question is visualized; file: visuals/<id>.html
+      "kind": "prototype|diagram", "version": 3, "at": "ISO",
+      "note": "v3: filter pane moved to the left rail per Q3",
+      "variants": ["A", "B", "C"],                              // what the file holds: option letters, "rec" (no options), "yours" (free text)
+      "stale": false, "staleBy": ["q5"],                        // stale: a later decision shows on it; staleBy: which ones (appends)
+      "drawing": { "since": "ISO", "seq": 12 },                 // while its draw runs; version is 0 before the first lands
+      "queued": ["feedback: make the sidebar collapsible"]      // its draw requests that arrived during its draw; next draw takes them
+    }
   }]
 }
 ```
@@ -533,6 +605,9 @@ Send lines (`events.jsonl`, also printed by `serve`):
   { "q": "q16", "type": "answer", "kind": "accept|option", "options": ["A", "C"] },  // a multi question
   { "q": "q8",  "type": "thread", "text": "…" },
   { "q": "q17", "type": "defer" }, { "q": "q3", "type": "reopen" }, { "q": "q9", "type": "explore" },
-  { "type": "visualize", "subagent": true }, { "type": "visual-feedback", "text": "…", "subagent": true },
-  { "type": "finish", "subagent": true } ] }   // subagent: the page's Use subagent checkbox; absent means true
+  { "q": "q3", "type": "visualize", "subagent": true }, { "q": "q3", "type": "visual-feedback", "text": "…", "subagent": true },
+  { "type": "auto-visualize", "on": true, "subagent": true },
+  { "type": "finish", "subagent": true, "redraw": true } ] }
+// subagent: the page's Use subagent checkbox; absent means true. finish carries subagent once a
+// question has a visual, and redraw (the confirm's "Redraw them first" box) once one is stale.
 ```

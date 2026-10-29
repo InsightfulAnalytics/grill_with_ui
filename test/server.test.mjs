@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { chmodSync, closeSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { connect, createServer } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
@@ -176,19 +176,30 @@ test("wait: blocks for a seq newer than --after (default: current last), prints 
   assert.equal(wo3.lines.length, 0);
 });
 
-test("serve: /visual serves the session's visual.html (no-store), 404 JSON when absent", async (t) => {
+test("serve: /visual?q= serves that question's visuals/<q>.html (no-store), 404 JSON when absent, 400 for a q that is not an id", async (t) => {
   const { session } = newSession(tmp("grill-v-"));
   const s = await startServe(session); t.after(s.stop);
-  const miss = await fetch(s.ready.url + "visual");
+  const miss = await fetch(s.ready.url + "visual?q=q1");
   assert.equal(miss.status, 404);
   assert.deepEqual(await miss.json(), { error: "no visual" });
   const html = "<!doctype html><title>v</title><h1>Prototype</h1>";
-  writeFileSync(join(session, "visual.html"), html);
-  const hit = await fetch(s.ready.url + "visual?v=1");
+  mkdirSync(join(session, "visuals"));
+  writeFileSync(join(session, "visuals", "q1.html"), html);
+  writeFileSync(join(session, "visual.html"), "<!doctype html><p>an older grill's single visual</p>");
+  writeFileSync(join(session, "secret.html"), "<!doctype html><p>not a visual</p>");
+  const hit = await fetch(s.ready.url + "visual?q=q1&v=1");
   assert.equal(hit.status, 200);
   assert.match(hit.headers.get("content-type"), /^text\/html/);
   assert.equal(hit.headers.get("cache-control"), "no-store");
   assert.equal(await hit.text(), html);
+  assert.equal((await fetch(s.ready.url + "visual?q=q2&v=1")).status, 404, "each question has its own file");
+  // The id names a file, so anything that could leave visuals/ is refused before the disk is touched.
+  for (const q of ["", "../secret", "..%2Fsecret", "q1.html", "a/b", "a%5Cb", "x".repeat(65)]) {
+    const r = await fetch(s.ready.url + "visual?q=" + q);
+    assert.equal(r.status, 400, `q=${q} is not a question id`);
+    assert.deepEqual(await r.json(), { error: "q must be a question id" });
+  }
+  assert.equal((await fetch(s.ready.url + "visual")).status, 400, "there is no grill-wide /visual any more");
 });
 
 // A raw request: fetch cannot set Host (it is a forbidden header), which is exactly what a
@@ -206,7 +217,8 @@ function raw(url, { method = "GET", path = "/", host, headers = {}, body } = {})
 
 test("serve: every route answers only requests addressed to this server's own loopback name (DNS rebinding)", async (t) => {
   const { session } = newSession(tmp("grill-h-"));
-  writeFileSync(join(session, "visual.html"), "<!doctype html><p>private plan</p>");
+  mkdirSync(join(session, "visuals"));
+  writeFileSync(join(session, "visuals", "q1.html"), "<!doctype html><p>private plan</p>");
   const s = await startServe(session); t.after(s.stop);
   const port = Number(new URL(s.ready.url).port);
   const themeNow = async () => (await raw(s.ready.url, { host: `127.0.0.1:${port}` })).body.match(/data-theme="([^"]+)"/)[1];
@@ -214,7 +226,7 @@ test("serve: every route answers only requests addressed to this server's own lo
   const send = JSON.stringify({ actions: [{ q: "q1", type: "defer" }] });
   const routes = [
     { method: "GET", path: "/" }, { method: "GET", path: "/state" }, { method: "GET", path: "/events" },
-    { method: "GET", path: "/visual?v=1" }, { method: "GET", path: "/nope" },
+    { method: "GET", path: "/visual?q=q1&v=1" }, { method: "GET", path: "/nope" },
     { method: "POST", path: "/send", body: send, headers: { "content-type": "application/json" } },
     { method: "POST", path: "/theme", body: JSON.stringify({ theme: themeBefore === "light" ? "dark" : "light" }), headers: { "content-type": "application/json" } },
   ];
@@ -245,9 +257,10 @@ test("serve: every route answers only requests addressed to this server's own lo
 
 test("serve: /visual carries a sandbox CSP so it never runs with the grill's origin, even opened directly", async (t) => {
   const { session } = newSession(tmp("grill-csp-"));
-  writeFileSync(join(session, "visual.html"), "<!doctype html><p>v</p>");
+  mkdirSync(join(session, "visuals"));
+  writeFileSync(join(session, "visuals", "q1.html"), "<!doctype html><p>v</p>");
   const s = await startServe(session); t.after(s.stop);
-  const hit = await fetch(s.ready.url + "visual?v=1");
+  const hit = await fetch(s.ready.url + "visual?q=q1&v=1");
   assert.equal(hit.status, 200);
   assert.equal(hit.headers.get("content-security-policy"), "sandbox allow-scripts");
   const page = await fetch(s.ready.url);
@@ -589,21 +602,23 @@ function rejected(session, body, pattern, extra) {
   return r;
 }
 
-test("patch: agent and visual merge one level; other top-level keys are replaced whole; stdout is one short line", () => {
+test("patch: agent merges one level; other top-level keys are replaced whole; an older grill's top-level visual is ignored and cannot be written; stdout is one short line", () => {
+  // An older grill had one grill-wide visual. Nothing renders or validates it now, so a session
+  // that has one still patches; but a patch cannot write one, since no page would show it.
+  const legacy = { kind: "prototype", version: 2, at: T0, note: "v2: first", stale: true, thread: [{ who: "user", text: "bigger", at: T0 }] };
   const session = seeded({
     note: "old note", doc: "docs/a-design.md",
     agent: { status: "working", since: T0, handled: 3 },
     questions: [qn("q1", 1), qn("q2", 1, { status: "answered", answer: { kind: "accept" } })],
-    visual: { kind: "prototype", version: 2, at: T0, note: "v2: first", stale: true, drawing: { since: T0, seq: 3 }, thread: [{ who: "user", text: "bigger", at: T0 }] },
+    visual: legacy,
   });
   const r = applied(session, {
     agent: { handled: 4 },
-    visual: { stale: false, note: "v3: bigger", drawing: { since: "2026-09-01T11:00:00.000Z", seq: 4 } },
-    note: "new note", doc: "docs/b-design.md", finished: { doc: "docs/b-design.md", visual: "docs/b-visual.html", at: T0 },
+    note: "new note", doc: "docs/b-design.md", finished: { doc: "docs/b-design.md", visuals: "docs/b-visuals/", at: T0 },
   });
   const st = stateOf(session);
   assert.deepEqual(st.agent, { status: "working", since: T0, handled: 4 });
-  assert.deepEqual(st.visual, { kind: "prototype", version: 2, at: T0, note: "v3: bigger", stale: false, drawing: { since: "2026-09-01T11:00:00.000Z", seq: 4 }, thread: [{ who: "user", text: "bigger", at: T0 }] });
+  assert.deepEqual(st.visual, legacy, "an older grill's visual is left as it was");
   assert.equal(st.note, "new note");
   assert.equal(st.doc, "docs/b-design.md");
   assert.equal(st.topic, "Patch topic", "untouched keys stay");
@@ -617,6 +632,11 @@ test("patch: agent and visual merge one level; other top-level keys are replaced
 
   applied(session, { finished: { doc: "docs/c-design.md", at: T0 } });
   assert.deepEqual(stateOf(session).finished, { doc: "docs/c-design.md", at: T0 }, "finished is replaced whole, not merged");
+
+  rejected(session, { visual: { stale: false } }, /no grill-wide visual.*"questions"/);
+  rejected(session, { agent: { handled: 5 }, visual: { kind: "prototype", version: 3 } }, /no grill-wide visual/);
+  applied(session, { visual: null });
+  assert.ok(!("visual" in stateOf(session)), "null still clears an older grill's visual");
 });
 
 test("patch: questions merge one level by id; each given field replaces that field whole", () => {
@@ -661,52 +681,61 @@ test("patch: a new id with a title is appended with defaults; an unknown id with
   rejected(session, { questions: [{ status: "open" }] }, /id/);
 });
 
-test("patch: thread and visual.queued append; appended messages without at get the current time", () => {
+test("patch: a question's thread, and its visual's queued and staleBy, append; the visual merges one level; appended messages without at get the current time", () => {
   const m = (who, text, at = T0) => ({ who, text, at });
   const session = seeded({
-    questions: [qn("q1", 1, { thread: [m("user", "first")] })],
-    visual: { kind: "diagram", version: 1, at: T0, thread: [m("agent", "v1 drawn")], drawing: { since: T0, seq: 1 }, queued: ["feedback: bigger"] },
+    questions: [
+      qn("q1", 1, { thread: [m("user", "first")], visual: { kind: "diagram", version: 1, at: T0, note: "v1", drawing: { since: T0, seq: 1 }, queued: ["feedback: bigger"], staleBy: ["q2"] } }),
+      qn("q3", 1, { visual: { kind: "prototype", version: 2, at: T0, queued: ["feedback: elsewhere"] } }),
+    ],
   });
   const t1 = Date.now();
   applied(session, {
-    questions: [{ id: "q1", thread: [m("user", "why?", "2026-09-01T10:05:00.000Z"), { who: "agent", text: "because" }] },
+    questions: [{ id: "q1", thread: [m("user", "why?", "2026-09-01T10:05:00.000Z"), { who: "agent", text: "because" }, { who: "user", text: "smaller", on: "visual" }],
+      visual: { queued: ["feedback: smaller"], staleBy: ["q4"], stale: true } },
       { id: "q2", round: 2, title: "New", rec: { text: "t", why: "w" }, thread: [{ who: "agent", text: "context" }] }],
-    visual: { thread: [{ who: "user", text: "smaller" }], queued: ["feedback: smaller"] },
   });
   const t2 = Date.now();
   const st = stateOf(session);
   const within = (at) => { assert.match(at, ISO); const t = Date.parse(at); assert.ok(t >= t1 - 1000 && t <= t2 + 1000, at); };
   const th = st.questions[0].thread;
   assert.deepEqual(th.slice(0, 2), [m("user", "first"), m("user", "why?", "2026-09-01T10:05:00.000Z")], "existing kept, given at kept");
-  assert.equal(th.length, 3);
+  assert.equal(th.length, 4);
   assert.equal(th[2].text, "because"); within(th[2].at);
-  within(st.questions[1].thread[0].at);
-  assert.deepEqual(st.visual.thread[0], m("agent", "v1 drawn"));
-  assert.equal(st.visual.thread[1].text, "smaller"); within(st.visual.thread[1].at);
-  assert.deepEqual(st.visual.queued, ["feedback: bigger", "feedback: smaller"]);
-  assert.deepEqual(st.visual.drawing, { since: T0, seq: 1 }, "the rest of visual is kept");
+  assert.equal(th[3].on, "visual", "a note about the visual keeps its tag"); within(th[3].at);
+  within(st.questions[2].thread[0].at);
+  const v = st.questions[0].visual;
+  assert.deepEqual(v.queued, ["feedback: bigger", "feedback: smaller"]);
+  assert.deepEqual(v.staleBy, ["q2", "q4"]);
+  assert.equal(v.stale, true);
+  assert.deepEqual([v.kind, v.version, v.at, v.note, v.drawing], ["diagram", 1, T0, "v1", { since: T0, seq: 1 }], "the rest of the visual is kept");
+  assert.deepEqual(st.questions[1].visual.queued, ["feedback: elsewhere"], "another question's visual is untouched");
   rejected(session, { questions: [{ id: "q1", thread: { who: "user", text: "not a list" } }] }, /thread/);
-  rejected(session, { visual: { queued: "not a list" } }, /queued/);
+  rejected(session, { questions: [{ id: "q1", visual: { queued: "not a list" } }] }, /q1\.visual\.queued/);
+  rejected(session, { questions: [{ id: "q1", visual: { staleBy: "q2" } }] }, /q1\.visual\.staleBy/);
+  rejected(session, { questions: [{ id: "q1", visual: "v2" }] }, /q1\.visual/);
+  rejected(session, { questions: [{ id: "q1", thread: [{ who: "user", text: "x", on: "card" }] }] }, /q1\.thread/);
 });
 
 test("patch: the server stamps the times the agent leaves out; an explicit time in the patch always wins", () => {
   const rows = [{ option: "A", pros: ["p"], cons: ["c"] }];
   const session = seeded({
     agent: { status: "working", since: T0, handled: 2 },
-    questions: [qn("q1", 1), qn("q2", 1)],
-    visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false, thread: [], drawing: { since: T0, seq: 2 } },
+    questions: [qn("q1", 1, { visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false, drawing: { since: T0, seq: 2 } } }),
+      qn("q2", 1, { visual: { kind: "diagram", version: 4, at: T0, note: "v4" } })],
   });
 
   // Left out: agent.since (status given), explore.at (known and new question), a bumped
-  // visual's at, the next draw's drawing.since, finished.at.
+  // question visual's at, the next draw's drawing.since, finished.at. Each question's visual is
+  // compared with its own version: q2's, given unchanged in the same patch, keeps its at.
   let t1 = Date.now();
   applied(session, {
     agent: { status: "waiting", handled: 3 },
     questions: [
-      { id: "q1", explore: { rows } },
-      { id: "q3", round: 2, title: "New", rec: { text: "t", why: "w" }, explore: { rows } },
+      { id: "q1", explore: { rows }, visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } } },
+      { id: "q2", visual: { version: 4, stale: true } },
+      { id: "q3", round: 2, title: "New", rec: { text: "t", why: "w" }, explore: { rows }, visual: { kind: "diagram", version: 0, drawing: { seq: 3 } } },
     ],
-    visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
     finished: { doc: "docs/x-design.md" },
   });
   let t2 = Date.now();
@@ -717,10 +746,12 @@ test("patch: the server stamps the times the agent leaves out; an explicit time 
   stampedBetween(st.questions[0].explore.at, t1, t2, "q1.explore.at");
   assert.deepEqual(st.questions[0].explore.rows, rows);
   stampedBetween(st.questions[2].explore.at, t1, t2, "q3.explore.at (new question)");
-  stampedBetween(st.visual.at, t1, t2, "visual.at on a version bump");
-  assert.equal(st.visual.version, 2);
-  stampedBetween(st.visual.drawing.since, t1, t2, "visual.drawing.since");
-  assert.equal(st.visual.drawing.seq, 3);
+  stampedBetween(st.questions[0].visual.at, t1, t2, "q1.visual.at on a version bump");
+  assert.equal(st.questions[0].visual.version, 2);
+  stampedBetween(st.questions[0].visual.drawing.since, t1, t2, "q1.visual.drawing.since");
+  assert.equal(st.questions[0].visual.drawing.seq, 3);
+  assert.equal(st.questions[1].visual.at, T0, "q2.visual.at kept: its version did not change");
+  stampedBetween(st.questions[2].visual.drawing.since, t1, t2, "a new question's first draw gets drawing.since");
   stampedBetween(st.finished.at, t1, t2, "finished.at");
   assert.equal(st.finished.doc, "docs/x-design.md");
 
@@ -728,30 +759,29 @@ test("patch: the server stamps the times the agent leaves out; an explicit time 
   const at = (m) => `2026-09-01T12:0${m}:00.000Z`;
   applied(session, {
     agent: { status: "working", since: at(1) },
-    questions: [{ id: "q2", explore: { at: at(2), rows } }],
-    visual: { version: 3, at: at(3), drawing: { since: at(4), seq: 4 } },
-    finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html", at: at(5) },
+    questions: [{ id: "q2", explore: { at: at(2), rows } }, { id: "q1", visual: { version: 3, at: at(3), drawing: { since: at(4), seq: 4 } } }],
+    finished: { doc: "docs/x-design.md", visuals: "docs/x-visuals/", at: at(5) },
   });
   st = stateOf(session);
   assert.equal(st.agent.since, at(1));
   assert.equal(st.questions[1].explore.at, at(2));
-  assert.equal(st.visual.at, at(3));
-  assert.equal(st.visual.drawing.since, at(4));
+  assert.equal(st.questions[0].visual.at, at(3));
+  assert.equal(st.questions[0].visual.drawing.since, at(4));
   assert.equal(st.finished.at, at(5));
 
   // Not asked for: no status, an unchanged version, no drawing, no explore → nothing restamped.
   const before = stateOf(session);
-  applied(session, { agent: { handled: 5 }, visual: { version: 3, stale: true }, questions: [{ id: "q2", status: "deferred" }] });
+  applied(session, { agent: { handled: 5 }, questions: [{ id: "q2", status: "deferred" }, { id: "q1", visual: { version: 3, stale: true } }] });
   st = stateOf(session);
   assert.equal(st.agent.since, before.agent.since, "agent.since kept when the patch gives no status");
-  assert.equal(st.visual.at, before.visual.at, "visual.at kept when the version does not change");
-  assert.deepEqual(st.visual.drawing, before.visual.drawing, "drawing untouched");
+  assert.equal(st.questions[0].visual.at, before.questions[0].visual.at, "visual.at kept when the version does not change");
+  assert.deepEqual(st.questions[0].visual.drawing, before.questions[0].visual.drawing, "drawing untouched");
   assert.deepEqual(st.questions[1].explore, before.questions[1].explore, "explore untouched");
   assert.deepEqual(st.finished, before.finished, "finished untouched");
 
   // finished is still replaced whole: re-given without at, it is stamped anew.
   t1 = Date.now();
-  applied(session, { finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" } });
+  applied(session, { finished: { doc: "docs/x-design.md", visuals: "docs/x-visuals/" } });
   t2 = Date.now();
   stampedBetween(stateOf(session).finished.at, t1, t2, "finished.at when finished is re-given");
 });
@@ -759,19 +789,19 @@ test("patch: the server stamps the times the agent leaves out; an explicit time 
 test("patch: null deletes a key at any level", () => {
   const session = seeded({
     note: "every branch settled",
-    questions: [qn("q1", 1, { status: "answered", answer: { kind: "accept" } }), qn("q2", 1)],
-    visual: { kind: "prototype", version: 3, at: T0, note: "v3", stale: false, drawing: { since: T0, seq: 5 }, queued: ["a"], thread: [] },
+    questions: [qn("q1", 1, { status: "answered", answer: { kind: "accept" } }),
+      qn("q2", 1, { visual: { kind: "prototype", version: 3, at: T0, note: "v3", stale: true, staleBy: ["q1"], drawing: { since: T0, seq: 5 }, queued: ["a"] } })],
   });
-  applied(session, { note: null, questions: [{ id: "q1", status: "reopened", answer: null }], visual: { drawing: null, queued: null } });
+  applied(session, { note: null, questions: [{ id: "q1", status: "reopened", answer: null }, { id: "q2", visual: { drawing: null, queued: null, staleBy: null, stale: false } }] });
   let st = stateOf(session);
   assert.ok(!("note" in st));
   assert.ok(!("answer" in st.questions[0]));
   assert.equal(st.questions[0].status, "reopened");
-  assert.deepEqual(st.visual, { kind: "prototype", version: 3, at: T0, note: "v3", stale: false, thread: [] });
-  applied(session, { visual: null, note: "The draw failed; click Visualize to try again." });
+  assert.deepEqual(st.questions[1].visual, { kind: "prototype", version: 3, at: T0, note: "v3", stale: false });
+  applied(session, { questions: [{ id: "q2", visual: null, thread: [{ who: "agent", text: "The draw failed; click Visualize Q2 to try again." }] }] });
   st = stateOf(session);
-  assert.ok(!("visual" in st));
-  assert.equal(st.note, "The draw failed; click Visualize to try again.");
+  assert.ok(!("visual" in st.questions[1]));
+  assert.equal(st.questions[1].thread[0].text, "The draw failed; click Visualize Q2 to try again.");
 });
 
 test("patch: terms are keyed by term; a known term is replaced whole, a new one appended", () => {
@@ -799,8 +829,15 @@ test("patch: invalid JSON, a failed validation, a bad shape, or a missing state.
   rejected(session, { questions: [{ id: "q1", status: "done" }] }, /q1.*status/);
   rejected(session, { questions: [{ id: "q1", answer: { kind: "maybe" } }] }, /q1.*answer/);
   rejected(session, { questions: [{ id: "q1", thread: [{ who: "bot", text: "hi" }] }] }, /q1.*thread/);
-  rejected(session, { visual: { kind: "painting" } }, /visual\.kind/);
-  rejected(session, { visual: { stale: true } }, /visual needs kind and version/);
+  rejected(session, { visual: { kind: "painting" } }, /no grill-wide visual/);
+  rejected(session, { questions: [{ id: "q1", visual: { kind: "painting", version: 0 } }] }, /q1\.visual\.kind/);
+  rejected(session, { questions: [{ id: "q1", visual: { stale: true } }] }, /q1\.visual needs kind and version/);
+  rejected(session, { questions: [{ id: "q1", visual: { kind: "diagram", version: 1, variants: [] } }] }, /q1\.visual\.variants/);
+  rejected(session, { questions: [{ id: "q1", visual: { kind: "diagram", version: 1, variants: ["A", 2] } }] }, /q1\.visual\.variants/);
+  rejected(session, { questions: [{ id: "q.1", round: 1, title: "t", rec: { text: "t" }, visual: { kind: "diagram", version: 0 } }] }, /q\.1 cannot have a visual/);
+  rejected(session, { autoVisualize: true }, /autoVisualize/);
+  rejected(session, { autoVisualize: { on: "yes" } }, /autoVisualize/);
+  rejected(session, { autoVisualize: { on: true, subagent: 1 } }, /autoVisualize/);
   rejected(session, { terms: "round" }, /terms/);
   rejected(session, '{"questions":null,"__proto__":{"questions":[]}}', /__proto__.*the patch/);
   rejected(session, '{"agent":{"status":null,"__proto__":{"status":"waiting"}}}', /__proto__.*agent/);
@@ -826,8 +863,7 @@ test("patch: an error the merge never expected keeps the contract — one grill:
 test("patch: every field the page renders must have the shape the render reads, or the patch is rejected", () => {
   const session = seeded({
     terms: [{ term: "round", def: "One turn of questions.", avoid: ["batch"] }],
-    questions: [qn("q1", 1, { explore: { at: T0, rows: [{ option: "A", pros: ["p"], cons: ["c"] }] } })],
-    visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false, thread: [] },
+    questions: [qn("q1", 1, { explore: { at: T0, rows: [{ option: "A", pros: ["p"], cons: ["c"] }] }, visual: { kind: "prototype", version: 1, at: T0, note: "v1", stale: false } })],
   });
   // The page renders each term as esc(t.def) and t.avoid.map(esc): a string avoid has a
   // length but no map, and freezes the page.
@@ -855,10 +891,11 @@ test("patch: every field the page renders must have the shape the render reads, 
   rejected(session, { questions: [{ id: "q1", multi: "yes" }] }, /q1\.multi/);
   rejected(session, { questions: [{ id: "q1", rec: { options: "A", why: "w" } }] }, /q1\.rec\.options/);
   rejected(session, { questions: [{ id: "q1", status: "answered", answer: { kind: "option", options: ["A", 2] } }] }, /q1\.answer\.options/);
-  rejected(session, { visual: { note: boom } }, /visual\.note/);
-  rejected(session, { visual: { version: 2, at: 5 } }, /visual\.at/);
-  rejected(session, { visual: { drawing: { since: boom, seq: 2 } } }, /visual\.drawing/);
+  rejected(session, { questions: [{ id: "q1", visual: { note: boom } }] }, /q1\.visual\.note/);
+  rejected(session, { questions: [{ id: "q1", visual: { version: 2, at: 5 } }] }, /q1\.visual\.at/);
+  rejected(session, { questions: [{ id: "q1", visual: { drawing: { since: boom, seq: 2 } } }] }, /q1\.visual\.drawing/);
   rejected(session, { finished: { doc: boom } }, /finished\.doc/);
+  rejected(session, { finished: { doc: "docs/x.md", visuals: 1 } }, /finished\.visuals/);
   rejected(session, { finished: { doc: "docs/x.md", visual: 1 } }, /finished\.visual/);
   rejected(session, { finished: { doc: "docs/x.md", at: boom } }, /finished\.at/);
 
@@ -867,13 +904,15 @@ test("patch: every field the page renders must have the shape the render reads, 
     terms: [{ term: "round", def: "d", avoid: [] }, { term: "send", def: "One press." }],
     questions: [
       { id: "q1", status: "answered", answer: { kind: "text", text: "Neither, a third way" }, rec: { text: "t", why: "w" },
-        explore: { rows: [{ option: "A", pros: ["p"], cons: [] }, { option: "B", pros: [], cons: ["c"] }] } },
+        explore: { rows: [{ option: "A", pros: ["p"], cons: [] }, { option: "B", pros: [], cons: ["c"] }] },
+        thread: [{ who: "user", text: "Bigger", on: "visual" }, { who: "agent", text: "Redrawing.", on: "visual" }],
+        visual: { version: 2, note: "v2: bigger", variants: ["A", "B", "yours"], stale: true, staleBy: ["q3"], drawing: { seq: 3 }, queued: ["feedback: bigger"] } },
       { id: "q2", round: 2, title: "No options", body: "b", rec: { why: "only a why" } },
       { id: "q3", round: 2, title: "Multi", body: "b", multi: true, options: [{ k: "A", text: "a" }, { k: "B", text: "b" }],
         rec: { options: ["A", "B"], why: "w" }, status: "answered", answer: { kind: "accept", options: ["A", "B"] } },
     ],
-    visual: { version: 2, note: "v2: bigger", drawing: { seq: 3 } },
-    finished: { doc: "docs/x-design.md", visual: "docs/x-visual.html" },
+    autoVisualize: { on: true, subagent: false },
+    finished: { doc: "docs/x-design.md", visuals: "docs/x-visuals/" },
   });
 });
 
@@ -1133,8 +1172,8 @@ test("serve --lan: ready and server.json carry a tokenized LAN URL; the LAN orig
   assert.equal((await fetch(lan("", token))).status, 200, "the LAN page serves with the token");
   assert.equal((await fetch(lanBase + "events")).status, 403, "LAN /events without a token is rejected");
   assert.equal((await fetch(lan("events"))).status, 200, "LAN /events serves with the token");
-  assert.equal((await fetch(lanBase + "visual")).status, 403, "LAN /visual without a token is rejected");
-  assert.equal((await fetch(lan("visual"))).status, 404, "LAN /visual with the token passes the gate (404, no visual yet)");
+  assert.equal((await fetch(lanBase + "visual?q=q1")).status, 403, "LAN /visual without a token is rejected");
+  assert.equal((await fetch(lanBase + `visual?q=q1&t=${token}`)).status, 404, "LAN /visual with the token passes the gate (404, no visual yet)");
   await s.out.nth(4); // ready + the three accepted sends
 
   assert.deepEqual(run(["url", "--session", session, "--all"]).split("\n"), [s.ready.url, s.ready.lanUrl], "url --all prints both");
