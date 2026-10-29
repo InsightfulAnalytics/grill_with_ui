@@ -4,7 +4,7 @@
 // Optional GRILL_EVIDENCE_DIR saves screenshots and the actual persisted sends.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -62,8 +62,8 @@ try {
     let version = 0;
     const draw = async (seq) => {
       // Inline draws keep the Send unacknowledged until the file is ready.
-      patch({ agent: { status: subagent ? "waiting" : "working", ...(subagent ? { handled: seq } : {}) }, visual: { kind: "prototype", version, thread: [], stale: false, drawing: { seq } } });
-      await page.waitForFunction(() => document.querySelector("#visualize")?.textContent.includes("Visualizing") || document.querySelector("#visual-strip")?.textContent.includes("regenerating"));
+      patch({ agent: { status: subagent ? "waiting" : "working", ...(subagent ? { handled: seq } : {}) }, questions: [{ id: "q1", visual: { kind: "prototype", version, stale: false, drawing: { seq } } }] });
+      await page.waitForFunction(() => document.querySelector("#visual-empty")?.textContent.includes("Drawing the first version") || document.querySelector("#visual-strip")?.textContent.includes("regenerating"));
       if (!subagent) {
         await page.waitForFunction(() => document.querySelector("#agent-status")?.textContent.includes("working"));
         assert.equal(await page.locator("#send").isDisabled(), true);
@@ -72,25 +72,33 @@ try {
         if (evidence && version === 0) await page.screenshot({ path: join(evidence, "inline-drawing.png"), fullPage: true });
       }
       version++;
-      writeFileSync(join(session, "visual.html"), `<!doctype html><title>Draw lifecycle fixture</title><h1>Visual version ${version}</h1><p>Fixture for ${subagent ? "background" : "inline"} draw delivery.</p>`);
-      patch({ visual: { version, drawing: null, note: `Version ${version} delivered` }, agent: { handled: seq, status: "waiting" } });
-      await page.waitForFunction((v) => document.querySelector("#visual-frame")?.getAttribute("src") === `/visual?v=${v}` && !document.querySelector("#staged-list .sent"), version);
+      if (!existsSync(join(session, "visuals"))) mkdirSync(join(session, "visuals"));
+      writeFileSync(join(session, "visuals", "q1.html"), `<!doctype html><title>Draw lifecycle fixture</title><h1>Visual version ${version}</h1><p>Fixture for ${subagent ? "background" : "inline"} draw delivery.</p>`);
+      patch({ questions: [{ id: "q1", visual: { version, drawing: null, note: `Version ${version} delivered` } }], agent: { handled: seq, status: "waiting" } });
+      // q1 has no options, so its one variant is the recommendation.
+      await page.waitForFunction((v) => document.querySelector("#visual-frame")?.getAttribute("src") === `/visual?q=q1&v=${v}#rec` && !document.querySelector("#staged-list .sent"), version);
       assert.equal(await page.frameLocator("#visual-frame").locator("h1").textContent(), `Visual version ${version}`);
     };
-    await draw(await send("#visualize", [{ type: "visualize", subagent }]));
-    await draw(await send("#regen", [{ type: "visualize", subagent }]));
+    // Switching to Visualize on a question with no visual asks for its first draw.
+    await draw(await send("#mode-visualize", [{ q: "q1", type: "visualize", subagent }]));
+    await draw(await send("#regen", [{ q: "q1", type: "visualize", subagent }]));
     // Read the flag at Send time, not when individual feedback messages are staged.
+    await page.locator("#aside-toggle").click(); // the discussion panel, where feedback is written, starts collapsed
     await page.locator("#use-subagent").setChecked(!subagent);
     for (const text of ["Use a narrower list", "Keep the title visible"]) {
       await page.locator("#feedback-in").fill(text);
       await page.locator("#stage-feedback").click();
     }
     await page.locator("#use-subagent").setChecked(subagent);
-    await draw(await send("#send", ["Use a narrower list", "Keep the title visible"].map((text) => ({ type: "visual-feedback", text, subagent }))));
+    await draw(await send("#send", ["Use a narrower list", "Keep the title visible"].map((text) => ({ q: "q1", type: "visual-feedback", text, subagent }))));
+    // The agent marks the visual out of date, so the Finish confirm offers to redraw it first.
+    patch({ questions: [{ id: "q1", visual: { stale: true, staleBy: ["q1"] } }] });
+    await page.locator("#visual-stale").waitFor();
     await page.locator("#finish").click();
-    const seq = await send("#finish-yes", [{ type: "finish", subagent }]);
+    assert.equal(await page.locator("#finish-redraw").isChecked(), true, "Redraw them first is ticked by default");
+    const seq = await send("#finish-yes", [{ type: "finish", subagent, redraw: true }]);
     await draw(seq);
-    patch({ finished: { doc: "docs/design.md", visual: "docs/design-visual.html" } });
+    patch({ finished: { doc: "docs/design.md", visuals: "docs/design-visuals/" } });
     await page.locator("#banner.done").waitFor();
     assert.equal(await page.locator("#use-subagent").isHidden(), true);
     if (evidence) writeFileSync(join(evidence, `toggle-${subagent}-events.jsonl`), readFileSync(join(session, "events.jsonl")));

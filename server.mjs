@@ -118,6 +118,8 @@ function readState(session) {
   try { return JSON.parse(fs.readFileSync(path.join(session, "state.json"), "utf8")); } catch { return null; }
 }
 const isOpen = (q) => q.status === "open" || q.status === "reopened";
+// A question id doubles as the name of its visual's file (visuals/<id>.html).
+const QUESTION_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 // ---- sessions (for resume) ----
 function cmdSessions(o) {
@@ -354,7 +356,11 @@ function cmdServe(o) {
     if (req.method === "GET" && pathname === "/listener") return json(res, 200, listenerOf(session, selfListening));
     if (req.method === "GET" && pathname === "/events") return send(res, 200, fs.existsSync(events) ? fs.readFileSync(events) : "", "application/x-ndjson");
     if (req.method === "GET" && pathname === "/visual") {
-      const visual = path.join(session, "visual.html"); // written only by the agent; shown by the page in a sandboxed iframe
+      // One file per question, written only by the agent; shown by the page in a sandboxed iframe.
+      // The id names a file, so it is held to the characters an id uses: no separators, no dots.
+      const q = u.searchParams.get("q") || "";
+      if (!QUESTION_ID.test(q)) return json(res, 400, { error: "q must be a question id" });
+      const visual = path.join(session, "visuals", `${q}.html`);
       if (!fs.existsSync(visual)) return json(res, 404, { error: "no visual" });
       // The iframe's sandbox attribute only applies inside the page; this header sandboxes the
       // visual wherever it is opened (a new tab, a bookmark), so its scripts never get this
@@ -522,10 +528,12 @@ function cmdUrl(o) {
 // ---- patch (the agent's only way to write state.json) ----
 // The agent sends only what changed, so the whole state never passes through its context.
 //   null deletes a key, at any level
-//   agent, visual: merge one level (visual.thread and visual.queued append)
-//   questions: keyed by id. A known id merges one level (its thread appends). An unknown id
-//     with a title is a new question, appended with defaults; without a title it is an error.
+//   agent: merges one level
+//   questions: keyed by id. A known id merges one level (its thread appends; its visual merges
+//     one level, and visual.queued and visual.staleBy append). An unknown id with a title is a
+//     new question, appended with defaults; without a title it is an error.
 //   terms: keyed by term; a known term is replaced whole, a new one appended
+//   visual: the grill-wide visual is gone (visuals are per question); only null is accepted
 //   any other key: replaced whole
 // Before the merge, the server stamps the times the agent leaves out (see stampTimes).
 class PatchError extends Error {}
@@ -541,21 +549,22 @@ const clean = (v) => (Array.isArray(v) ? v.map(clean)
   : isObj(v) ? Object.fromEntries(Object.entries(v).filter(([, x]) => x !== null).map(([k, x]) => [k, clean(x)])) : v);
 const newQuestionDefaults = () => ({ status: "open", deps: [], options: [], thread: [], durable: false, updated: false });
 const THREAD = ["thread"];
-const VISUAL_APPENDS = ["thread", "queued"];
+const VISUAL_APPENDS = ["queued", "staleBy"];
 
 // Agents do not reliably know the current time, so the server stamps every time the patch
 // leaves out (or gives as null); an explicit time in the patch always wins:
-//   agent.since          when the patch gives agent.status
-//   <q>.explore.at       when the patch gives a question's explore
-//   visual.at            when the patch changes visual.version
-//   visual.drawing.since when the patch gives visual.drawing
-//   finished.at          when the patch gives finished
-//   at on each appended message in a question's thread or visual.thread
+//   agent.since              when the patch gives agent.status
+//   <q>.explore.at           when the patch gives a question's explore
+//   <q>.visual.at            when the patch changes that question's visual.version
+//   <q>.visual.drawing.since when the patch gives that question's visual.drawing
+//   finished.at              when the patch gives finished
+//   at on each appended message in a question's thread
 // Returns a stamped copy of the patch; shapes it does not recognise are left for the merge
 // and validation to reject.
 function stampTimes(p, state, now) {
   const fill = (o, k) => (isObj(o) && o[k] == null ? { ...o, [k]: now } : o);
   const messages = (list) => (Array.isArray(list) ? list.map((m) => fill(m, "at")) : list);
+  const known = isObj(state) && Array.isArray(state.questions) ? state.questions : [];
   const out = { ...p };
   if (isObj(out.agent) && out.agent.status != null) out.agent = fill(out.agent, "since");
   if (isObj(out.finished)) out.finished = fill(out.finished, "at");
@@ -565,16 +574,16 @@ function stampTimes(p, state, now) {
       const s = { ...q };
       if (isObj(s.explore)) s.explore = fill(s.explore, "at");
       if ("thread" in s) s.thread = messages(s.thread);
+      if (isObj(s.visual)) {
+        let v = { ...s.visual };
+        const was = known.find((x) => isObj(x) && x.id === s.id);
+        const current = isObj(was) && isObj(was.visual) ? was.visual.version : undefined;
+        if (v.version != null && v.version !== current) v = fill(v, "at");
+        if (isObj(v.drawing)) v.drawing = fill(v.drawing, "since");
+        s.visual = v;
+      }
       return s;
     });
-  }
-  if (isObj(out.visual)) {
-    let v = { ...out.visual };
-    const current = isObj(state) && isObj(state.visual) ? state.visual.version : undefined;
-    if (v.version != null && v.version !== current) v = fill(v, "at");
-    if (isObj(v.drawing)) v.drawing = fill(v.drawing, "since");
-    if ("thread" in v) v.thread = messages(v.thread);
-    out.visual = v;
   }
   return out;
 }
@@ -584,17 +593,20 @@ function appendTo(current, added, where) {
   if (current !== undefined && !Array.isArray(current)) bad(`${where} in state.json is not an array`);
   return [...(current || []), ...added.map(clean)];
 }
-// One level: each key given replaces that key (null deletes it); keys in `appends` append.
-function mergeOne(current, p, where, appends = []) {
+// One level: each key given replaces that key (null deletes it); keys in `appends` append, and
+// keys in `nested` merge one level themselves, with nested[key] as their appends.
+function mergeOne(current, p, where, appends = [], nested = {}) {
   if (!isObj(p)) bad(`${where} in a patch must be an object`);
   const out = isObj(current) ? { ...current } : {};
   for (const [k, v] of fieldsOf(p, where)) {
     if (v === null) delete out[k];
     else if (appends.includes(k)) out[k] = appendTo(out[k], v, `${where}.${k}`);
+    else if (Object.hasOwn(nested, k)) out[k] = mergeOne(out[k], v, `${where}.${k}`, nested[k]);
     else out[k] = clean(v);
   }
   return out;
 }
+const QUESTION_NESTED = { visual: VISUAL_APPENDS };
 function patchQuestions(current, list) {
   if (!Array.isArray(list)) bad("questions in a patch must be an array of entries, each with an id");
   if (!Array.isArray(current)) bad("questions in state.json is not an array");
@@ -602,14 +614,14 @@ function patchQuestions(current, list) {
   for (const p of list) {
     if (!isObj(p) || typeof p.id !== "string" || !p.id) bad("every question entry in a patch needs a string id");
     const i = qs.findIndex((q) => isObj(q) && q.id === p.id);
-    if (i >= 0) { qs[i] = mergeOne(qs[i], p, p.id, THREAD); continue; }
+    if (i >= 0) { qs[i] = mergeOne(qs[i], p, p.id, THREAD, QUESTION_NESTED); continue; }
     if (p.title == null) {
       const ids = qs.map((q) => q && q.id).join(", ") || "none yet";
       bad(`no question ${JSON.stringify(p.id)} in state.json (ids: ${ids}); a new question needs round, title, and rec`);
     }
     const missing = ["round", "rec"].filter((k) => p[k] == null);
     if (missing.length) bad(`new question ${p.id} needs ${missing.join(" and ")}`);
-    const q = mergeOne({}, p, p.id, THREAD);
+    const q = mergeOne({}, p, p.id, THREAD, QUESTION_NESTED);
     for (const [k, d] of Object.entries(newQuestionDefaults())) if (!(k in q)) q[k] = d;
     qs.push(q);
   }
@@ -632,7 +644,8 @@ function applyPatch(state, p, now) {
   for (const [k, v] of fieldsOf(stampTimes(p, state, now), "the patch")) {
     if (v === null) delete out[k];
     else if (k === "agent") out.agent = mergeOne(out.agent, v, "agent");
-    else if (k === "visual") out.visual = mergeOne(out.visual, v, "visual", VISUAL_APPENDS);
+    // An agent still following the old one-visual rules would otherwise write a visual no page shows.
+    else if (k === "visual") bad('there is no grill-wide visual: each question carries its own, as {"questions":[{"id":"q3","visual":{…}}]}');
     else if (k === "questions") out.questions = patchQuestions(out.questions, v);
     else if (k === "terms") out.terms = patchTerms(out.terms, v);
     else out[k] = clean(v);
@@ -659,16 +672,23 @@ function validateState(s) {
   const count = (v) => Number.isInteger(v) && v >= 0;
   const check = (o, k, ok, msg) => { if (k in o) need(ok(o[k]), msg); };
   const texts = (o, keys, where) => { for (const k of keys) check(o, k, str, `${where}.${k} must be a string`); };
+  // "on":"visual" tags a message written about the question's visual (feedback and its reply).
   const messages = (list, where) => {
     need(Array.isArray(list), `${where} must be an array`);
-    list.forEach((m, i) => need(isObj(m) && (m.who === "user" || m.who === "agent") && str(m.text) && (m.at === undefined || str(m.at)),
-      `${where}[${i}] must be {"who":"user"|"agent","text":"…","at":"ISO"}`));
+    list.forEach((m, i) => need(isObj(m) && (m.who === "user" || m.who === "agent") && str(m.text) && (m.at === undefined || str(m.at)) && (m.on === undefined || m.on === "visual"),
+      `${where}[${i}] must be {"who":"user"|"agent","text":"…","at":"ISO"}, plus "on":"visual" for a note about the question's visual`));
   };
   for (const k of ["topic", "intent", "doc", "project", "created", "note"]) check(s, k, str, `${k} must be a string`);
   if ("finished" in s) {
-    need(isObj(s.finished), 'finished must be an object ({"doc","visual","at"})');
-    texts(s.finished, ["doc", "visual", "at"], "finished");
+    need(isObj(s.finished), 'finished must be an object ({"doc","visuals","at"})');
+    texts(s.finished, ["doc", "visuals", "visual", "at"], "finished");
   }
+  if ("autoVisualize" in s) {
+    const a = s.autoVisualize;
+    need(isObj(a) && bool(a.on) && (a.subagent === undefined || bool(a.subagent)), 'autoVisualize must be {"on":true|false,"subagent":true|false}');
+  }
+  // A top-level `visual` is the grill-wide visual of an older session: the page ignores it, and
+  // so does this check, so such a session still patches. A patch cannot write one (applyPatch).
   if ("agent" in s) {
     need(isObj(s.agent), "agent must be an object");
     check(s.agent, "status", (v) => v === "waiting" || v === "working", 'agent.status must be "waiting" or "working"');
@@ -743,19 +763,21 @@ function validateState(s) {
     }
     for (const k of ["durable", "updated"]) check(q, k, bool, `${w}.${k} must be true or false`);
     if ("thread" in q) messages(q.thread, `${w}.thread`);
+    if ("visual" in q) {
+      const v = q.visual, where = `${w}.visual`;
+      need(QUESTION_ID.test(w), `${w} cannot have a visual: its file is visuals/<id>.html, so the id must be letters, digits, - or _`);
+      need(isObj(v), `${where} must be an object`);
+      check(v, "kind", (x) => x === "prototype" || x === "diagram", `${where}.kind must be "prototype" or "diagram"`);
+      check(v, "version", count, `${where}.version must be a whole number`);
+      need("kind" in v && "version" in v, `${where} needs kind and version; the first draw creates it (version 0)`);
+      check(v, "stale", bool, `${where}.stale must be true or false`);
+      texts(v, ["note", "at"], where);
+      check(v, "drawing", (x) => isObj(x) && (!("since" in x) || str(x.since)), `${where}.drawing must be {"since":"ISO","seq":N}`);
+      check(v, "queued", strs, `${where}.queued must be an array of strings`);
+      check(v, "staleBy", strs, `${where}.staleBy must be an array of question ids`);
+      check(v, "variants", (x) => strs(x) && x.length > 0, `${where}.variants must be a non-empty array of variant keys (option letters, "rec", "yours")`);
+    }
   });
-  if ("visual" in s) {
-    const v = s.visual;
-    need(isObj(v), "visual must be an object");
-    check(v, "kind", (x) => x === "prototype" || x === "diagram", 'visual.kind must be "prototype" or "diagram"');
-    check(v, "version", count, "visual.version must be a whole number");
-    need("kind" in v && "version" in v, "visual needs kind and version; the first Visualize draw creates it (version 0)");
-    check(v, "stale", bool, "visual.stale must be true or false");
-    texts(v, ["note", "at"], "visual");
-    check(v, "drawing", (x) => isObj(x) && (!("since" in x) || str(x.since)), 'visual.drawing must be {"since":"ISO","seq":N}');
-    check(v, "queued", strs, "visual.queued must be an array of strings");
-    if ("thread" in v) messages(v.thread, "visual.thread");
-  }
 }
 
 function validateAxesChange(previous, next) {
